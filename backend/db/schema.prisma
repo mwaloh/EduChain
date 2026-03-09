@@ -1,0 +1,95 @@
+// Prisma schema for EduChain analytics database
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Institution {
+  id            String    @id @default(cuid())
+  address       String    @unique // Blockchain address
+  name          String
+  metadataURI   String?
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  credentials   Credential[]
+  verificationLogs VerificationLog[]
+  
+  @@index([address])
+}
+
+model Credential {
+  id            String    @id @default(cuid())
+  tokenId       BigInt    @unique // NFT token ID
+  studentAddress String   // Blockchain address
+  studentHash   String    // SHA256 hash for privacy
+  ipfsCid       String
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  
+  issuedOn      DateTime
+  expiresOn     DateTime?
+  revoked       Boolean   @default(false)
+  revocationReason String?
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  verificationLogs VerificationLog[]
+  
+  @@index([tokenId])
+  @@index([studentAddress])
+  @@index([institutionId])
+}
+
+model VerificationLog {
+  id              String      @id @default(cuid())
+  verifierAddress String      // Employer/verifier blockchain address
+  tokenId         BigInt      // NFT token ID
+  credentialId    String
+  credential      Credential  @relation(fields: [credentialId], references: [id])
+  institutionId   String
+  institution     Institution @relation(fields: [institutionId], references: [id])
+  
+  timestamp       DateTime    @default(now())
+  status          String      // "valid", "revoked", "expired", "invalid"
+  revoked         Boolean     @default(false)
+  blockchainTxHash String?    // Transaction hash if logged on-chain
+  
+  @@index([verifierAddress])
+  @@index([tokenId])
+  @@index([timestamp])
+  @@index([status])
+}
+
+model Analytics {
+  id              String      @id @default(cuid())
+  date            DateTime    @unique // Daily aggregated stats
+  totalCredentials BigInt     @default(0)
+  totalVerifications BigInt   @default(0)
+  revokedCount    BigInt      @default(0)
+  expiredCount    BigInt      @default(0)
+  newInstitutions BigInt      @default(0)
+  
+  createdAt       DateTime    @default(now())
+  
+  @@index([date])
+}
+
+model FraudAttempt {
+  id              String      @id @default(cuid())
+  tokenId         BigInt
+  verifierAddress String
+  attemptedStatus String      // What they tried to verify as
+  actualStatus    String      // Actual status from blockchain
+  timestamp       DateTime    @default(now())
+  
+  @@index([tokenId])
+  @@index([timestamp])
+}
+
