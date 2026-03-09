@@ -274,9 +274,6 @@ npx hardhat test tests/contracts/EduChain.test.ts
 - **Storage**: IPFS (Pinata/Infura)
 - **Testing**: Hardhat, Chai, Mocha
 
-## 📄 License
-
-MIT
 
 ## 🤝 Contributing
 
