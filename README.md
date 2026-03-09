@@ -280,7 +280,7 @@ MIT
 
 ## 🤝 Contributing
 
-This is a final year project. For questions or contributions, please contact the project maintainers.
+This is a final year project. For questions or contributions, please contact Dickson Waweru(Mwaloh)-254712704419.
 
 ## 📧 Contact
 
