@@ -12,6 +12,12 @@ import rateLimit from 'express-rate-limit';
 
 import { verifyRoute } from './routes/verify';
 import { analyticsRoute } from './routes/analytics';
+import { ipfsRoute } from './routes/ipfs';
+import { auditRoute } from './routes/audit';
+import { claimRoute } from './routes/claim';
+import { institutionRoute } from './routes/institution';
+import { shareRoute } from './routes/share';
+import { bulkImportRoute } from './routes/bulk-import';
 import { eventListenerService } from './services/eventListener';
 
 dotenv.config();
@@ -40,6 +46,12 @@ app.get('/health', (req, res) => {
 // Routes
 app.use('/api/verify', verifyRoute(prisma));
 app.use('/api/analytics', analyticsRoute(prisma));
+app.use('/api/ipfs', ipfsRoute());
+app.use('/api/audit', auditRoute(prisma));
+app.use('/api/claim', claimRoute(prisma));
+app.use('/api/institutions', institutionRoute(prisma));
+app.use('/api/share', shareRoute(prisma));
+app.use('/api/bulk-import', bulkImportRoute(prisma));
 
 // Error handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -63,7 +75,9 @@ app.listen(PORT, () => {
   console.log(`🚀 EduChain Analytics Backend running on port ${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/health`);
   console.log(`🔍 Verify API: http://localhost:${PORT}/api/verify`);
+  console.log(`📦 IPFS API: http://localhost:${PORT}/api/ipfs`);
   console.log(`📈 Analytics API: http://localhost:${PORT}/api/analytics`);
+  console.log(`📋 Audit API: http://localhost:${PORT}/api/audit`);
 });
 
 // Graceful shutdown

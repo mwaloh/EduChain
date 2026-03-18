@@ -4,7 +4,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -21,6 +21,23 @@ model Institution {
   verificationLogs VerificationLog[]
   
   @@index([address])
+}
+
+model InstitutionSignup {
+  id                  String    @id @default(cuid())
+  institutionName     String
+  adminEmail          String    @unique
+  adminName           String
+  domain              String
+  passwordHash        String
+  verificationToken   String    @unique
+  status              String    @default("pending") // "pending", "verified", "approved", "rejected"
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  
+  @@index([adminEmail])
+  @@index([verificationToken])
+  @@index([status])
 }
 
 model Credential {
@@ -41,6 +58,8 @@ model Credential {
   updatedAt     DateTime  @updatedAt
   
   verificationLogs VerificationLog[]
+  claimTokens      ClaimToken[]
+  accessTokens     AccessToken[]
   
   @@index([tokenId])
   @@index([studentAddress])
@@ -91,5 +110,95 @@ model FraudAttempt {
   
   @@index([tokenId])
   @@index([timestamp])
+}
+
+model AuditLog {
+  id                  String      @id @default(cuid())
+  timestamp           DateTime    @default(now())
+  action              String      // "CREDENTIAL_MINTED", "CREDENTIAL_VERIFIED", etc.
+  userAddress         String      // Blockchain address of user performing action
+  userRole            String      // "student", "institution_admin", "owner", "verifier"
+  details             String      // JSON string with action details
+  status              String      // "success" or "failed"
+  ipAddress           String?     // Optional: IP address for web actions
+  userAgent           String?     // Optional: Browser/client info
+  relatedCredentialId BigInt?     // Optional: Link to credential
+  relatedVerificationId Int?      // Optional: Link to verification
+  
+  @@index([timestamp])
+  @@index([action])
+  @@index([userAddress])
+  @@index([status])
+  @@index([relatedCredentialId])
+}
+
+model ClaimToken {
+  id            String    @id @default(cuid())
+  token         String    @unique // Unique claim token (UUID)
+  credentialId  String
+  credential    Credential @relation(fields: [credentialId], references: [id])
+  studentEmail  String    // Email address for notifications
+  studentName   String?   // Optional student name for personalization
+  claimed       Boolean   @default(false)
+  claimedAt     DateTime?
+  claimedBy     String?   // Address that claimed it
+  expiresAt     DateTime  // Token expiration
+  createdAt     DateTime  @default(now())
+  
+  @@index([token])
+  @@index([studentEmail])
+  @@index([claimed])
+  @@index([expiresAt])
+}
+
+model AccessToken {
+  id            String    @id @default(cuid())
+  token         String    @unique // Unique share token (UUID)
+  credentialId  String
+  credential    Credential @relation(fields: [credentialId], references: [id])
+  creatorAddress String   // Student's wallet address
+  expiresAt     DateTime  // Token expiration
+  viewCount     Int       @default(0) // Track how many times viewed
+  limited       Boolean   @default(false) // If true, only works once
+  createdAt     DateTime  @default(now())
+  
+  @@index([token])
+  @@index([creatorAddress])
+  @@index([expiresAt])
+}
+
+model BulkImportJob {
+  id            String    @id @default(cuid())
+  jobId         String    @unique // Unique job identifier
+  institutionAddress String // Institution performing the import
+  status        String    @default("pending") // "pending", "processing", "completed", "failed"
+  totalRows     Int       // Total rows in CSV
+  processedRows Int       @default(0) // Rows processed so far
+  successCount  Int       @default(0) // Successfully imported
+  failureCount  Int       @default(0) // Failed rows
+  errors        String    @default("[]") // JSON array of error objects
+  createdAt     DateTime  @default(now())
+  completedAt   DateTime? // When job finished
+  
+  @@index([jobId])
+  @@index([institutionAddress])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model CredentialAudit {
+  id                    String    @id @default(cuid())
+  action                String    // "BULK_IMPORT", "ISSUED", "REVOKED", etc.
+  studentAddress        String    // Student's wallet address
+  institutionAddress    String    // Institution's wallet address
+  metadata              String?   // JSON string with metadata
+  transactionHash       String?   // Blockchain transaction hash
+  details               String?   // Additional details
+  createdAt             DateTime  @default(now())
+  
+  @@index([action])
+  @@index([studentAddress])
+  @@index([institutionAddress])
+  @@index([createdAt])
 }
 

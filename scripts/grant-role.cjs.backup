@@ -1,0 +1,35 @@
+require('dotenv').config();
+const { ethers } = require('ethers');
+const artifact = require('../artifacts/contracts/EduChain.sol/EduChain.json');
+
+(async () => {
+  const rpc = process.env.RPC_URL;
+  const addr = process.env.CONTRACT_ADDRESS;
+  const pk = process.env.PRIVATE_KEY; // owner/admin key required
+  const to = process.argv[2];
+
+  if (!pk) {
+    console.error('Set PRIVATE_KEY in backend/.env (owner/admin key required)');
+    process.exit(1);
+  }
+  if (!to) {
+    console.error('Usage: node scripts/grant-role.js 0xYourAddressHere');
+    process.exit(1);
+  }
+
+  const provider = new ethers.providers.JsonRpcProvider(rpc);
+  const signer = new ethers.Wallet(pk, provider);
+  const contract = new ethers.Contract(addr, artifact.abi, signer);
+
+  try {
+    const role = await contract.INSTITUTION_ADMIN_ROLE();
+    console.log('Granting role', role, 'to', to);
+    const tx = await contract.grantRole(role, to);
+    console.log('tx hash:', tx.hash);
+    await tx.wait();
+    console.log('Granted INSTITUTION_ADMIN_ROLE to', to);
+  } catch (err) {
+    console.error('Error granting role:', err);
+    process.exit(1);
+  }
+})();

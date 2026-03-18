@@ -13,6 +13,33 @@ export async function eventListenerService(
 ) {
   console.log('👂 Starting event listener service...');
 
+  // Helper function to log audit events
+  const logAuditEvent = async (
+    action: string,
+    userAddress: string,
+    userRole: string,
+    details: any,
+    status: 'success' | 'failed' = 'success',
+    relatedCredentialId?: bigint,
+    relatedVerificationId?: number
+  ) => {
+    try {
+      await prisma.auditLog.create({
+        data: {
+          action,
+          userAddress: userAddress.toLowerCase(),
+          userRole,
+          details: JSON.stringify(details),
+          status,
+          relatedCredentialId,
+          relatedVerificationId,
+        },
+      });
+    } catch (error) {
+      console.error('Failed to log audit event:', error);
+    }
+  };
+
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   
   const CONTRACT_ABI = [
@@ -64,8 +91,34 @@ export async function eventListenerService(
         where: { id: institutionRecord.id },
         data: { credentialCount: { increment: 1 } },
       });
+
+      // Log audit event
+      await logAuditEvent(
+        'CREDENTIAL_MINTED',
+        to.toLowerCase(),
+        'student',
+        {
+          tokenId: tokenId.toString(),
+          institution: institution.toLowerCase(),
+          ipfsCid,
+          issuedOn: new Date(Number(issuedOn) * 1000).toISOString(),
+          expiresOn: expiresOn > 0 ? new Date(Number(expiresOn) * 1000).toISOString() : null,
+          transactionHash: event.transactionHash,
+        },
+        'success',
+        BigInt(tokenId.toString())
+      );
     } catch (error) {
       console.error('Error processing CredentialMinted event:', error);
+      
+      // Log failed audit event
+      await logAuditEvent(
+        'CREDENTIAL_MINTED',
+        to?.toLowerCase() || 'unknown',
+        'student',
+        { error: error.message, tokenId: tokenId?.toString() },
+        'failed'
+      );
     }
   });
 
@@ -86,9 +139,33 @@ export async function eventListenerService(
             revocationReason: reason,
           },
         });
+
+        // Log audit event
+        await logAuditEvent(
+          'CREDENTIAL_REVOKED',
+          institution.toLowerCase(),
+          'institution_admin',
+          {
+            tokenId: tokenId.toString(),
+            reason,
+            timestamp: new Date(Number(timestamp) * 1000).toISOString(),
+            transactionHash: event.transactionHash,
+          },
+          'success',
+          BigInt(tokenId.toString())
+        );
       }
     } catch (error) {
       console.error('Error processing CredentialRevoked event:', error);
+      
+      // Log failed audit event
+      await logAuditEvent(
+        'CREDENTIAL_REVOKED',
+        institution?.toLowerCase() || 'unknown',
+        'institution_admin',
+        { error: error.message, tokenId: tokenId?.toString() },
+        'failed'
+      );
     }
   });
 
@@ -120,9 +197,35 @@ export async function eventListenerService(
             blockchainTxHash: event.transactionHash,
           },
         });
+
+        // Log audit event
+        await logAuditEvent(
+          'CREDENTIAL_VERIFIED',
+          verifier.toLowerCase(),
+          'verifier',
+          {
+            tokenId: tokenId.toString(),
+            status: statusMap[Number(status)] || 'unknown',
+            institution: institution.toLowerCase(),
+            timestamp: new Date(Number(timestamp) * 1000).toISOString(),
+            transactionHash: event.transactionHash,
+          },
+          'success',
+          BigInt(tokenId.toString()),
+          undefined // verificationId will be set after creation
+        );
       }
     } catch (error) {
       console.error('Error processing CredentialVerified event:', error);
+      
+      // Log failed audit event
+      await logAuditEvent(
+        'CREDENTIAL_VERIFIED',
+        verifier?.toLowerCase() || 'unknown',
+        'verifier',
+        { error: error.message, tokenId: tokenId?.toString() },
+        'failed'
+      );
     }
   });
 
@@ -143,8 +246,32 @@ export async function eventListenerService(
           active: true,
         },
       });
+
+      // Log audit event
+      await logAuditEvent(
+        'INSTITUTION_ONBOARDED',
+        adminAddress.toLowerCase(),
+        'owner',
+        {
+          institutionAddress: institutionAddress.toLowerCase(),
+          adminAddress: adminAddress.toLowerCase(),
+          name,
+          timestamp: new Date(Number(timestamp) * 1000).toISOString(),
+          transactionHash: event.transactionHash,
+        },
+        'success'
+      );
     } catch (error) {
       console.error('Error processing InstitutionOnboarded event:', error);
+      
+      // Log failed audit event
+      await logAuditEvent(
+        'INSTITUTION_ONBOARDED',
+        adminAddress?.toLowerCase() || 'unknown',
+        'owner',
+        { error: error.message, institutionAddress: institutionAddress?.toLowerCase() },
+        'failed'
+      );
     }
   });
 
