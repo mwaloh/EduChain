@@ -320,6 +320,17 @@ class BulkImportService extends EventEmitter {
             credentialData,
             institutionAddress
           );
+
+          // Create claim token for this student
+          const claimToken = await this.prisma.claimToken.create({
+            data: {
+              credentialId: "", // Will be set after credential is created
+              studentEmail: credentialData.studentEmail || "",
+              studentName: credentialData.studentName,
+              expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+            }
+          });
+
           successCount++;
         } catch (error: any) {
           errors.push({

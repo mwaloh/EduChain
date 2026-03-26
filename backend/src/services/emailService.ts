@@ -15,7 +15,7 @@ export class EmailService {
       console.log('📧 Email service: SendGrid configured');
     } else {
       // Fallback to nodemailer with SMTP
-      this.transporter = nodemailer.createTransporter({
+      this.transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST || 'smtp.gmail.com',
         port: parseInt(process.env.SMTP_PORT || '587'),
         secure: false,
@@ -136,6 +136,9 @@ export class EmailService {
       </html>
     `;
 
+    await this.sendEmail(studentEmail, subject, html);
+  }
+
   async sendInstitutionVerificationEmail(params: {
     adminEmail: string;
     adminName: string;
@@ -205,6 +208,8 @@ export class EmailService {
 
     await this.sendEmail(adminEmail, subject, html);
   }
+
+  private async sendEmail(to: string, subject: string, html: string) {
     try {
       if (this.sendgridConfigured) {
         await sgMail.send({

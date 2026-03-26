@@ -8,6 +8,55 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  googleId      String?   @unique
+  walletAddress String?   @unique // Blockchain address (optional, can be added later)
+  name          String?
+  emailVerified DateTime?
+  image         String?
+  role          String    @default("student") // "student", "employer", "institution_admin"
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  accounts      Account[]
+  sessions      Session[]
+  
+  @@index([email])
+  @@index([googleId])
+  @@index([walletAddress])
+}
+
+model Account {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider      String    // "google", "metamask", etc.
+  providerAccountId String
+  type          String    // "oauth"
+  scope         String?
+  token_type    String?
+  access_token  String?
+  refresh_token String?
+  expires_at    Int?
+  createdAt     DateTime  @default(now())
+  
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionToken  String    @unique
+  expires       DateTime
+  createdAt     DateTime  @default(now())
+  
+  @@index([userId])
+}
+
 model Institution {
   id            String    @id @default(cuid())
   address       String    @unique // Blockchain address

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { emailService } from '../../services/emailService';
+import { emailService } from '../services/emailService';
+import { validateInstitutionEmail, sendDomainVerificationEmail } from '../services/domainVerificationService';
 import crypto from 'crypto';
 
 export function institutionRoute(prisma: PrismaClient) {
@@ -121,6 +122,124 @@ export function institutionRoute(prisma: PrismaClient) {
     } catch (error: any) {
       console.error('Institution verification error:', error);
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  /**
+   * POST /api/institutions/approve/:signupId - Admin approves institution signup
+   * Requires admin authentication (TODO: implement admin auth)
+   */
+  router.post('/approve/:signupId', async (req, res) => {
+    try {
+      const { signupId } = req.params;
+
+      const signup = await prisma.institutionSignup.findUnique({
+        where: { id: signupId }
+      });
+
+      if (!signup) {
+        return res.status(404).json({ error: 'Signup request not found' });
+      }
+
+      if (signup.status !== 'verified') {
+        return res.status(400).json({ error: 'Signup must be verified first' });
+      }
+
+      // Create the institution in the blockchain-ready table
+      const institution = await prisma.institution.create({
+        data: {
+          name: signup.institutionName,
+          metadataURI: `https://${signup.domain}`, // Store domain for reference
+          active: true,
+        }
+      });
+
+      // Update signup status
+      await prisma.institutionSignup.update({
+        where: { id: signupId },
+        data: { status: 'approved' }
+      });
+
+      // TODO: Send approval email to institution admin
+      // await emailService.sendInstitutionApprovalEmail(signup.adminEmail, signup.institutionName);
+
+      res.json({
+        success: true,
+        message: 'Institution approved successfully',
+        institution: {
+          id: institution.id,
+          name: institution.name,
+          address: institution.address,
+          active: institution.active,
+        }
+      });
+    } catch (error: any) {
+      console.error('Institution approval error:', error);
+      res.status(500).json({ error: 'Failed to approve institution' });
+    }
+  });
+
+  /**
+   * POST /api/institutions/reject/:signupId - Admin rejects institution signup
+   */
+  router.post('/reject/:signupId', async (req, res) => {
+    try {
+      const { signupId } = req.params;
+      const { reason } = req.body;
+
+      const signup = await prisma.institutionSignup.findUnique({
+        where: { id: signupId }
+      });
+
+      if (!signup) {
+        return res.status(404).json({ error: 'Signup request not found' });
+      }
+
+      // Update status to rejected
+      await prisma.institutionSignup.update({
+        where: { id: signupId },
+        data: { status: 'rejected' }
+      });
+
+      // TODO: Send rejection email
+      // await emailService.sendInstitutionRejectionEmail(signup.adminEmail, signup.institutionName, reason);
+
+      res.json({
+        success: true,
+        message: 'Institution signup rejected'
+      });
+    } catch (error: any) {
+      console.error('Institution rejection error:', error);
+      res.status(500).json({ error: 'Failed to reject institution' });
+    }
+  });
+
+  /**
+   * GET /api/institutions/pending - Get all pending institution signups
+   * Requires admin authentication (TODO: implement admin auth)
+   */
+  router.get('/pending', async (req, res) => {
+    try {
+      const pendingSignups = await prisma.institutionSignup.findMany({
+        where: {
+          status: { in: ['pending', 'verified'] }
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          institutionName: true,
+          adminEmail: true,
+          adminName: true,
+          domain: true,
+          status: true,
+          createdAt: true,
+        }
+      });
+
+      res.json(pendingSignups);
+    } catch (error: any) {
+      console.error('Error fetching pending signups:', error);
+      res.status(500).json({ error: 'Failed to fetch pending signups' });
     }
   });
 

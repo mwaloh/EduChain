@@ -2,6 +2,8 @@ import { Router, Request, Response, Express } from "express";
 import multer from "multer";
 import { PrismaClient } from "@prisma/client";
 import BulkImportService from "../services/bulkImportService";
+import { emailService } from "../services/emailService";
+import { createUserWallet } from "../services/walletService";
 
 export function bulkImportRoute(prisma: PrismaClient) {
   const router = Router();
@@ -52,7 +54,7 @@ router.post("/validate", upload.single("file"), (req: Request, res: Response) =>
 
 /**
  * POST /api/bulk-import/upload
- * Uploads and starts bulk import job
+ * Uploads and starts bulk import job with email notifications
  */
 router.post("/upload", upload.single("file"), async (req: Request, res: Response) => {
   try {
@@ -60,7 +62,7 @@ router.post("/upload", upload.single("file"), async (req: Request, res: Response
       return res.status(400).json({ error: "No file provided" });
     }
 
-    const { institutionAddress } = req.body;
+    const { institutionAddress, sendEmails = 'true' } = req.body;
 
     if (!institutionAddress) {
       return res.status(400).json({ error: "institutionAddress is required" });
@@ -74,6 +76,18 @@ router.post("/upload", upload.single("file"), async (req: Request, res: Response
       institutionAddress
     );
 
+    // If emails should be sent, process them asynchronously
+    if (sendEmails === 'true') {
+      // Start email sending in background
+      setImmediate(async () => {
+        try {
+          await sendBulkClaimEmails(job.jobId, institutionAddress);
+        } catch (error) {
+          console.error('Failed to send bulk emails:', error);
+        }
+      });
+    }
+
     res.json({
       success: true,
       job: {
@@ -81,6 +95,7 @@ router.post("/upload", upload.single("file"), async (req: Request, res: Response
         status: job.status,
         totalRows: job.totalRows,
         createdAt: job.createdAt,
+        emailsQueued: sendEmails === 'true',
       },
     });
   } catch (error: any) {
@@ -207,4 +222,76 @@ router.get("/download/:jobId", async (req: Request, res: Response) => {
 });
 
   return router;
+}
+
+/**
+ * Sends claim emails for all students in a bulk import job
+ */
+async function sendBulkClaimEmails(jobId: string, institutionAddress: string) {
+  try {
+    console.log(`[EMAIL] Starting bulk email send for job ${jobId}`);
+
+    // Get all claim tokens for this job
+    const claimTokens = await prisma.claimToken.findMany({
+      where: {
+        // Find tokens created recently (within last 5 minutes) for this institution
+        createdAt: {
+          gte: new Date(Date.now() - 5 * 60 * 1000)
+        },
+        studentEmail: {
+          not: ""
+        }
+      },
+      include: {
+        credential: {
+          include: {
+            institution: true
+          }
+        }
+      }
+    });
+
+    console.log(`[EMAIL] Found ${claimTokens.length} claim tokens to email`);
+
+    let sentCount = 0;
+    let failedCount = 0;
+
+    for (const token of claimTokens) {
+      try {
+        if (!token.studentEmail) continue;
+
+        const claimUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/claim/${token.token}`;
+
+        await emailService.sendCredentialIssuedEmail({
+          studentEmail: token.studentEmail,
+          studentName: token.studentName || 'Student',
+          institutionName: token.credential?.institution?.name || 'Your Institution',
+          claimUrl,
+          credentialName: 'Your Academic Credential', // TODO: Get from metadata
+        });
+
+        sentCount++;
+        console.log(`[EMAIL] Sent claim email to ${token.studentEmail}`);
+      } catch (error) {
+        console.error(`[EMAIL] Failed to send email to ${token.studentEmail}:`, error);
+        failedCount++;
+      }
+
+      // Small delay to avoid overwhelming email service
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    console.log(`[EMAIL] Bulk email send complete: ${sentCount} sent, ${failedCount} failed`);
+
+    // Update job with email status
+    await prisma.bulkImportJob.update({
+      where: { jobId },
+      data: {
+        // Could add email status fields to schema if needed
+      }
+    });
+
+  } catch (error) {
+    console.error(`[EMAIL] Bulk email send failed for job ${jobId}:`, error);
+  }
 }

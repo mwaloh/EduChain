@@ -18,6 +18,8 @@ import { claimRoute } from './routes/claim';
 import { institutionRoute } from './routes/institution';
 import { shareRoute } from './routes/share';
 import { bulkImportRoute } from './routes/bulk-import';
+import { adminRoute } from './routes/admin';
+import usersRouter from './routes/users';
 import { eventListenerService } from './services/eventListener';
 
 dotenv.config();
@@ -52,6 +54,8 @@ app.use('/api/claim', claimRoute(prisma));
 app.use('/api/institutions', institutionRoute(prisma));
 app.use('/api/share', shareRoute(prisma));
 app.use('/api/bulk-import', bulkImportRoute(prisma));
+app.use('/api/users', usersRouter);
+app.use('/api/admin', adminRoute(prisma));
 
 // Error handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
