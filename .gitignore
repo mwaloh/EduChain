@@ -8,6 +8,9 @@ backend/node_modules/
 .env.local
 .env.*.local
 backend/.env
+client_secret*.json
+*oauth*secret*.json
+credentials*.json
 
 # Build outputs
 artifacts/

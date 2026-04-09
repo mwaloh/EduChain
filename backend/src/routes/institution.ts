@@ -1,124 +1,169 @@
 import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { emailService } from '../services/emailService';
-import { validateInstitutionEmail, sendDomainVerificationEmail } from '../services/domainVerificationService';
 import crypto from 'crypto';
+
+function parseOptionalNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
 
 export function institutionRoute(prisma: PrismaClient) {
   const router = Router();
 
-  /**
-   * POST /api/institutions/signup - Register new institution
-   */
   router.post('/signup', async (req, res) => {
     try {
-      const { institutionName, adminEmail, adminName, domain, password } = req.body;
+      const {
+        institutionName,
+        institutionCode,
+        adminEmail,
+        adminName,
+        adminWalletAddress,
+        adminPhone,
+        domain,
+        password,
+        locationText,
+        country,
+        county,
+        city,
+        foundedYear,
+        latitude,
+        longitude,
+        locationPinned,
+        logoUrl,
+      } = req.body;
 
-      // Validation
       if (!institutionName || !adminEmail || !adminName || !domain || !password) {
-        return res.status(400).json({ error: 'All fields are required' });
+        return res.status(400).json({ error: 'Institution name, admin details, domain, and password are required.' });
       }
 
-      // Check if institution already exists
+      const parsedLat = parseOptionalNumber(latitude);
+      const parsedLng = parseOptionalNumber(longitude);
+      const isPinned = Boolean(locationPinned);
+
+      if (isPinned && (parsedLat === null || parsedLng === null)) {
+        return res.status(400).json({ error: 'Pinned location requires latitude and longitude.' });
+      }
+
       const existingInstitution = await prisma.institution.findFirst({
         where: {
-          OR: [
-            { name: institutionName },
-            { metadataURI: { contains: domain } } // Simple domain check
-          ]
-        }
+          deletedAt: null,
+          OR: [{ name: institutionName }, institutionCode ? { code: institutionCode } : undefined].filter(Boolean) as any,
+        },
       });
-
       if (existingInstitution) {
-        return res.status(400).json({ error: 'Institution already registered' });
+        return res.status(400).json({ error: 'Institution already registered.' });
       }
 
-      // Check if admin email already used
-      const existingSignup = await prisma.institutionSignup.findUnique({
-        where: { adminEmail }
+      const existingSignup = await prisma.institutionSignup.findFirst({ 
+        where: { 
+          adminEmail: {
+            equals: adminEmail.toLowerCase(),
+            mode: 'insensitive'
+          }
+        } 
       });
-
       if (existingSignup) {
-        return res.status(400).json({ error: 'Email already registered' });
+        return res.status(400).json({ error: 'Admin email already has an onboarding request.' });
       }
 
-      // Hash password
       const passwordHash = crypto.createHash('sha256').update(password).digest('hex');
-
-      // Generate verification token
       const verificationToken = crypto.randomUUID();
 
-      // Create signup request
-      const signup = await prisma.institutionSignup.create({
+      await prisma.institutionSignup.create({
         data: {
           institutionName,
-          adminEmail,
+          institutionCode: institutionCode || null,
+          adminEmail: adminEmail.toLowerCase(), // Store email in lowercase for consistency
           adminName,
+          adminWalletAddress: adminWalletAddress || null,
+          adminPhone: adminPhone || null,
           domain,
+          locationText: locationText || null,
+          country: country || null,
+          county: county || null,
+          city: city || null,
+          foundedYear: parseOptionalNumber(foundedYear),
+          latitude: parsedLat,
+          longitude: parsedLng,
+          locationPinned: isPinned,
+          logoUrl: logoUrl || null,
           passwordHash,
           verificationToken,
           status: 'pending',
-        }
+        },
       });
 
-      // Send verification email
       try {
         const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/institution/verify/${verificationToken}`;
-
         await emailService.sendInstitutionVerificationEmail({
           adminEmail,
           adminName,
           institutionName,
           verificationUrl,
         });
-
-        res.json({
-          success: true,
-          message: 'Registration submitted. Please check your email for verification.'
-        });
       } catch (emailError) {
         console.error('Failed to send verification email:', emailError);
-        // Don't fail the signup, but log the error
-        res.json({
-          success: true,
-          message: 'Registration submitted. Email verification may be delayed.'
-        });
       }
+
+      await prisma.auditLog.create({
+        data: {
+          action: 'INSTITUTION_SIGNUP_SUBMITTED',
+          userAddress: adminWalletAddress || 'N/A',
+          userRole: 'institution_admin_candidate',
+          actorEmail: adminEmail,
+          entityType: 'institution_signup',
+          details: JSON.stringify({ institutionName, adminEmail, domain }),
+          afterJson: JSON.stringify({ institutionName, institutionCode, adminEmail, status: 'pending' }),
+          status: 'success',
+        },
+      });
+
+      res.json({
+        success: true,
+        message: 'Registration submitted. Please verify your email, then await super admin approval.',
+      });
     } catch (error: any) {
       console.error('Institution signup error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });
 
-  /**
-   * GET /api/institutions/verify/:token - Verify institution email
-   */
   router.get('/verify/:token', async (req, res) => {
     try {
       const { token } = req.params;
-
-      const signup = await prisma.institutionSignup.findUnique({
-        where: { verificationToken: token }
-      });
+      const signup = await prisma.institutionSignup.findUnique({ where: { verificationToken: token } });
 
       if (!signup) {
         return res.status(404).json({ error: 'Invalid verification token' });
       }
-
       if (signup.status !== 'pending') {
         return res.status(400).json({ error: 'Token already used or expired' });
       }
 
-      // Update status to verified
       await prisma.institutionSignup.update({
         where: { id: signup.id },
-        data: { status: 'verified' }
+        data: { status: 'verified' },
       });
 
-      res.json({
-        success: true,
-        message: 'Email verified successfully. Your institution registration is pending admin approval.'
+      await prisma.auditLog.create({
+        data: {
+          action: 'INSTITUTION_SIGNUP_VERIFIED',
+          userAddress: signup.adminWalletAddress || 'N/A',
+          userRole: 'institution_admin_candidate',
+          actorEmail: signup.adminEmail,
+          entityType: 'institution_signup',
+          entityId: signup.id,
+          details: JSON.stringify({ signupId: signup.id, adminEmail: signup.adminEmail }),
+          status: 'success',
+        },
       });
+
+      res.json({ success: true, message: 'Email verified. Your onboarding request is now pending super admin review.' });
     } catch (error: any) {
       console.error('Institution verification error:', error);
       res.status(500).json({ error: 'Internal server error' });
@@ -126,117 +171,67 @@ export function institutionRoute(prisma: PrismaClient) {
   });
 
   /**
-   * POST /api/institutions/approve/:signupId - Admin approves institution signup
-   * Requires admin authentication (TODO: implement admin auth)
+   * GET /api/institutions/profile?email=
+   * Returns institution record for a logged-in institution admin (matched by email).
    */
-  router.post('/approve/:signupId', async (req, res) => {
+  router.get('/profile', async (req, res) => {
     try {
-      const { signupId } = req.params;
-
-      const signup = await prisma.institutionSignup.findUnique({
-        where: { id: signupId }
-      });
-
-      if (!signup) {
-        return res.status(404).json({ error: 'Signup request not found' });
+      const emailRaw = typeof req.query.email === 'string' ? req.query.email.trim() : '';
+      if (!emailRaw) {
+        return res.status(400).json({ error: 'Query parameter email is required.' });
       }
 
-      if (signup.status !== 'verified') {
-        return res.status(400).json({ error: 'Signup must be verified first' });
+      const user =
+        (await prisma.user.findFirst({
+          where: { email: emailRaw, deletedAt: null },
+          include: { institution: true, institutionAdmin: true },
+        })) ||
+        (await prisma.user.findFirst({
+          where: { email: emailRaw.toLowerCase(), deletedAt: null },
+          include: { institution: true, institutionAdmin: true },
+        }));
+
+      if (!user) {
+        console.warn(`[INSTITUTION PROFILE] User not found with email: ${emailRaw}`);
+        return res.status(404).json({ error: 'User not found. Please ensure you are logged in with the correct email.' });
       }
 
-      // Create the institution in the blockchain-ready table
-      const institution = await prisma.institution.create({
-        data: {
-          name: signup.institutionName,
-          metadataURI: `https://${signup.domain}`, // Store domain for reference
-          active: true,
-        }
-      });
+      if (!user.institution) {
+        console.warn(`[INSTITUTION PROFILE] User ${user.email} has no institution assigned. Status: awaiting approval or rejected.`);
+        return res.status(404).json({ 
+          error: 'Institution profile not yet assigned. If you just onboarded, please complete email verification and wait for super admin approval. You can also register at /institution/signup.' 
+        });
+      }
 
-      // Update signup status
-      await prisma.institutionSignup.update({
-        where: { id: signupId },
-        data: { status: 'approved' }
-      });
-
-      // TODO: Send approval email to institution admin
-      // await emailService.sendInstitutionApprovalEmail(signup.adminEmail, signup.institutionName);
+      if (user.institution.deletedAt) {
+        console.warn(`[INSTITUTION PROFILE] User ${user.email}'s institution has been deleted.`);
+        return res.status(404).json({ error: 'Your institution profile has been deleted.' });
+      }
 
       res.json({
         success: true,
-        message: 'Institution approved successfully',
-        institution: {
-          id: institution.id,
-          name: institution.name,
-          address: institution.address,
-          active: institution.active,
-        }
+        institution: user.institution,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          walletAddress: user.walletAddress,
+        },
       });
     } catch (error: any) {
-      console.error('Institution approval error:', error);
-      res.status(500).json({ error: 'Failed to approve institution' });
+      console.error('Institution profile error:', error);
+      res.status(500).json({ error: 'Failed to load institution profile. Please check server logs or contact support.' });
     }
   });
 
-  /**
-   * POST /api/institutions/reject/:signupId - Admin rejects institution signup
-   */
-  router.post('/reject/:signupId', async (req, res) => {
-    try {
-      const { signupId } = req.params;
-      const { reason } = req.body;
-
-      const signup = await prisma.institutionSignup.findUnique({
-        where: { id: signupId }
-      });
-
-      if (!signup) {
-        return res.status(404).json({ error: 'Signup request not found' });
-      }
-
-      // Update status to rejected
-      await prisma.institutionSignup.update({
-        where: { id: signupId },
-        data: { status: 'rejected' }
-      });
-
-      // TODO: Send rejection email
-      // await emailService.sendInstitutionRejectionEmail(signup.adminEmail, signup.institutionName, reason);
-
-      res.json({
-        success: true,
-        message: 'Institution signup rejected'
-      });
-    } catch (error: any) {
-      console.error('Institution rejection error:', error);
-      res.status(500).json({ error: 'Failed to reject institution' });
-    }
-  });
-
-  /**
-   * GET /api/institutions/pending - Get all pending institution signups
-   * Requires admin authentication (TODO: implement admin auth)
-   */
-  router.get('/pending', async (req, res) => {
+  router.get('/pending', async (_req, res) => {
     try {
       const pendingSignups = await prisma.institutionSignup.findMany({
-        where: {
-          status: { in: ['pending', 'verified'] }
-        },
+        where: { status: { in: ['pending', 'verified'] } },
         orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          institutionName: true,
-          adminEmail: true,
-          adminName: true,
-          domain: true,
-          status: true,
-          createdAt: true,
-        }
       });
-
-      res.json(pendingSignups);
+      res.json({ success: true, signups: pendingSignups, count: pendingSignups.length });
     } catch (error: any) {
       console.error('Error fetching pending signups:', error);
       res.status(500).json({ error: 'Failed to fetch pending signups' });

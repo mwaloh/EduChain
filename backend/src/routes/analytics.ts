@@ -185,6 +185,231 @@ export function analyticsRoute(prisma: PrismaClient) {
     }
   });
 
+  /**
+   * GET /api/analytics/institution/:institutionId
+   * Get institution-scoped analytics
+   * Requires: x-user-email, x-institution-id headers (admin only)
+   */
+  router.get('/institution/:institutionId', async (req: Request, res: Response) => {
+    try {
+      const { institutionId } = req.params;
+      const adminEmail = (req.headers['x-user-email'] as string) || '';
+
+      // Verify institution admin
+      const adminRecord = await prisma.institutionAdmin.findFirst({
+        where: {
+          institution: { id: institutionId },
+          email: adminEmail,
+          deletedAt: null,
+        },
+      });
+
+      if (!adminRecord) {
+        return res.status(403).json({ error: 'Unauthorized' });
+      }
+
+      // Get institution details
+      const institution = await prisma.institution.findUnique({
+        where: { id: institutionId },
+        include: {
+          _count: {
+            select: {
+              credentials: true,
+              students: {
+                where: { deletedAt: null },
+              },
+              verificationLogs: true,
+              admins: {
+                where: { deletedAt: null },
+              },
+            },
+          },
+        },
+      });
+
+      if (!institution) {
+        return res.status(404).json({ error: 'Institution not found' });
+      }
+
+      // Get credentials breakdown
+      const totalCredentials = await prisma.credential.count({
+        where: { institutionId },
+      });
+
+      const revokedCredentials = await prisma.credential.count({
+        where: { institutionId, revoked: true },
+      });
+
+      const expiredCredentials = await prisma.credential.count({
+        where: {
+          institutionId,
+          expiresOn: { lte: new Date() },
+          revoked: false,
+        },
+      });
+
+      const activeCredentials = totalCredentials - revokedCredentials;
+
+      // Get verification logs
+      const verifications = await prisma.verificationLog.count({
+        where: { institutionId },
+      });
+
+      // Get student status breakdown
+      const studentStats = await prisma.studentProfile.groupBy({
+        by: ['status'],
+        where: { institutionId, deletedAt: null },
+        _count: true,
+      });
+
+      // Get recent verifications
+      const recentVerifications = await prisma.verificationLog.findMany({
+        where: { institutionId },
+        take: 10,
+        orderBy: { timestamp: 'desc' },
+        select: {
+          tokenId: true,
+          status: true,
+          timestamp: true,
+          verifierAddress: true,
+        },
+      });
+
+      res.json({
+        success: true,
+        institution: {
+          id: institution.id,
+          name: institution.name,
+          code: institution.code,
+          location: institution.locationText,
+          status: institution.status,
+        },
+        credentials: {
+          total: totalCredentials,
+          active: activeCredentials,
+          revoked: revokedCredentials,
+          expired: expiredCredentials,
+        },
+        students: {
+          total: institution._count.students,
+          byStatus: Object.fromEntries(
+            studentStats.map((stat) => [stat.status, stat._count])
+          ),
+        },
+        verifications: {
+          total: verifications,
+          recent: recentVerifications,
+        },
+        admins: {
+          total: institution._count.admins,
+        },
+      });
+    } catch (error: any) {
+      console.error('Institution analytics error:', error);
+      res.status(500).json({ error: 'Failed to fetch analytics' });
+    }
+  });
+
+  /**
+   * GET /api/analytics/institution/:institutionId/students
+   * Get institution student enrollment trends
+   */
+  router.get('/institution/:institutionId/students', async (req: Request, res: Response) => {
+    try {
+      const { institutionId } = req.params;
+      const adminEmail = (req.headers['x-user-email'] as string) || '';
+
+      // Verify admin
+      const adminRecord = await prisma.institutionAdmin.findFirst({
+        where: {
+          institution: { id: institutionId },
+          email: adminEmail,
+          deletedAt: null,
+        },
+      });
+
+      if (!adminRecord) {
+        return res.status(403).json({ error: 'Unauthorized' });
+      }
+
+      // Get all students
+      const students = await prisma.studentProfile.findMany({
+        where: { institutionId, deletedAt: null },
+        select: {
+          id: true,
+          email: true,
+          program: true,
+          yearOfStudy: true,
+          status: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      // Get enrollment by month (last 12 months)
+      const now = new Date();
+      const last12Months = Array.from({ length: 12 }).map((_, i) => {
+        const d = new Date(now);
+        d.setMonth(d.getMonth() - i);
+        return d;
+      });
+
+      const enrollmentByMonth = await Promise.all(
+        last12Months.map(async (date) => {
+          const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
+          const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+
+          const count = await prisma.studentProfile.count({
+            where: {
+              institutionId,
+              createdAt: { gte: monthStart, lte: monthEnd },
+              deletedAt: null,
+            },
+          });
+
+          return {
+            month: monthStart.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+            enrollments: count,
+          };
+        })
+      );
+
+      // Distribution by program
+      const programDist = await prisma.studentProfile.groupBy({
+        by: ['program'],
+        where: { institutionId, deletedAt: null },
+        _count: true,
+      });
+
+      // Distribution by year
+      const yearDist = await prisma.studentProfile.groupBy({
+        by: ['yearOfStudy'],
+        where: { institutionId, deletedAt: null },
+        _count: true,
+      });
+
+      res.json({
+        success: true,
+        students: {
+          total: students.length,
+          list: students,
+        },
+        trends: {
+          enrollmentByMonth: enrollmentByMonth.reverse(),
+          byProgram: Object.fromEntries(
+            programDist.map((p) => [p.program || 'Unknown', p._count])
+          ),
+          byYear: Object.fromEntries(
+            yearDist.map((y) => [y.yearOfStudy || 'Unknown', y._count])
+          ),
+        },
+      });
+    } catch (error: any) {
+      console.error('Student analytics error:', error);
+      res.status(500).json({ error: 'Failed to fetch student analytics' });
+    }
+  });
+
   return router;
 }
 

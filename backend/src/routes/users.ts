@@ -54,9 +54,12 @@ router.post('/google', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Check if user exists
-    let user = await prisma.user.findUnique({
-      where: { email },
+    // Check if user exists (case-insensitive)
+    let user = await prisma.user.findFirst({
+      where: { 
+        email: email.toLowerCase(),
+        deletedAt: null 
+      },
     });
 
     if (!user) {
@@ -65,7 +68,7 @@ router.post('/google', async (req: Request, res: Response) => {
 
       user = await prisma.user.create({
         data: {
-          email,
+          email: email.toLowerCase(), // Store email in lowercase for consistency
           name,
           image,
           googleId,
@@ -73,6 +76,7 @@ router.post('/google', async (req: Request, res: Response) => {
           walletAddress: wallet.address,
         },
       });
+      console.log(`[GOOGLE AUTH] New user created: ${email}`);
 
       // TODO: In production, securely store the private key
       // Example: Send to key management service, encrypt, etc.
@@ -82,13 +86,14 @@ router.post('/google', async (req: Request, res: Response) => {
     } else {
       // Update existing user with Google info
       user = await prisma.user.update({
-        where: { email },
+        where: { id: user.id },
         data: {
           googleId,
           name: name || user.name,
           image: image || user.image,
         },
       });
+      console.log(`[GOOGLE AUTH] User updated: ${email} (institutionId: ${user.institutionId || 'none'})`);
     }
 
     // Create or update account

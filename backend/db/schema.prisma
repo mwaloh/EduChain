@@ -17,15 +17,22 @@ model User {
   emailVerified DateTime?
   image         String?
   role          String    @default("student") // "student", "employer", "institution_admin"
+  institutionId String?
+  deletedAt     DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   
   accounts      Account[]
   sessions      Session[]
+  institution   Institution?      @relation(fields: [institutionId], references: [id])
+  institutionAdmin InstitutionAdmin?
+  studentProfile StudentProfile?
   
   @@index([email])
   @@index([googleId])
   @@index([walletAddress])
+  @@index([institutionId])
+  @@index([deletedAt])
 }
 
 model Account {
@@ -59,27 +66,63 @@ model Session {
 
 model Institution {
   id            String    @id @default(cuid())
-  address       String    @unique // Blockchain address
+  address       String?   @unique // Blockchain address
+  code          String?   @unique
   name          String
+  locationText  String?
+  country       String?
+  county        String?
+  city          String?
+  foundedYear   Int?
+  latitude      Float?
+  longitude     Float?
+  locationPinned Boolean  @default(false)
+  logoUrl       String?
   metadataURI   String?
+  status        String    @default("approved") // "pending_review", "approved", "rejected", "suspended"
   active        Boolean   @default(true)
+  deletedAt     DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   
   credentials   Credential[]
   verificationLogs VerificationLog[]
+  users         User[]
+  admins        InstitutionAdmin[]
+  students      StudentProfile[]
+  signups       InstitutionSignup[]
   
   @@index([address])
+  @@index([status])
+  @@index([deletedAt])
 }
 
 model InstitutionSignup {
   id                  String    @id @default(cuid())
   institutionName     String
+  institutionCode     String?
   adminEmail          String    @unique
   adminName           String
+  adminWalletAddress  String?
+  adminPhone          String?
   domain              String
+  locationText        String?
+  country             String?
+  county              String?
+  city                String?
+  foundedYear         Int?
+  latitude            Float?
+  longitude           Float?
+  locationPinned      Boolean   @default(false)
+  logoUrl             String?
+  metadataURI         String?
   passwordHash        String
   verificationToken   String    @unique
+  reviewNotes         String?
+  reviewedBy          String?
+  reviewedAt          DateTime?
+  approvedInstitutionId String?
+  institution         Institution? @relation(fields: [approvedInstitutionId], references: [id])
   status              String    @default("pending") // "pending", "verified", "approved", "rejected"
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
@@ -87,6 +130,49 @@ model InstitutionSignup {
   @@index([adminEmail])
   @@index([verificationToken])
   @@index([status])
+  @@index([approvedInstitutionId])
+}
+
+model InstitutionAdmin {
+  id             String      @id @default(cuid())
+  institutionId  String
+  institution    Institution @relation(fields: [institutionId], references: [id])
+  userId         String      @unique
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email          String
+  walletAddress  String?
+  active         Boolean     @default(true)
+  deletedAt      DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([institutionId])
+  @@index([email])
+  @@index([walletAddress])
+  @@index([deletedAt])
+}
+
+model StudentProfile {
+  id             String      @id @default(cuid())
+  institutionId  String
+  institution    Institution @relation(fields: [institutionId], references: [id])
+  userId         String?     @unique
+  user           User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  email          String
+  walletAddress  String?
+  admissionNo    String?
+  program        String?
+  yearOfStudy    Int?
+  status         String      @default("active") // "active", "inactive", "graduated"
+  deletedAt      DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([institutionId])
+  @@index([email])
+  @@index([walletAddress])
+  @@index([status])
+  @@index([deletedAt])
 }
 
 model Credential {
@@ -165,8 +251,14 @@ model AuditLog {
   id                  String      @id @default(cuid())
   timestamp           DateTime    @default(now())
   action              String      // "CREDENTIAL_MINTED", "CREDENTIAL_VERIFIED", etc.
+  actorUserId         String?
+  actorEmail          String?
   userAddress         String      // Blockchain address of user performing action
   userRole            String      // "student", "institution_admin", "owner", "verifier"
+  entityType          String?
+  entityId            String?
+  beforeJson          String?
+  afterJson           String?
   details             String      // JSON string with action details
   status              String      // "success" or "failed"
   ipAddress           String?     // Optional: IP address for web actions
@@ -179,6 +271,8 @@ model AuditLog {
   @@index([userAddress])
   @@index([status])
   @@index([relatedCredentialId])
+  @@index([actorUserId])
+  @@index([entityType, entityId])
 }
 
 model ClaimToken {
@@ -248,6 +342,40 @@ model CredentialAudit {
   @@index([action])
   @@index([studentAddress])
   @@index([institutionAddress])
+  @@index([createdAt])
+}
+
+model TokenReward {
+  id                    String    @id @default(cuid())
+  recipientAddress      String    // Wallet address receiving rewards
+  amount                Float     // Token amount in EDU
+  reason                String    // "CREDENTIAL_ISSUED", "CREDENTIAL_VERIFIED", "VERIFIED_BULK", etc.
+  transactionHash       String?   // Blockchain transaction hash of mint
+  credentialId          String?   // Reference to credential if applicable
+  verificationLogId     String?   // Reference to verification if applicable
+  metadata              String?   // JSON string with additional context
+  status                String    @default("pending") // "pending", "confirmed", "failed"
+  createdAt             DateTime  @default(now())
+  confirmedAt           DateTime?
+  
+  @@index([recipientAddress])
+  @@index([reason])
+  @@index([status])
+  @@index([credentialId])
+  @@index([verificationLogId])
+  @@index([createdAt])
+}
+
+model RewardLog {
+  id                    String    @id @default(cuid())
+  totalRewardsDistributed Float    // Running total
+  credentialsIssuedCount Int      @default(0) // Cumulative count
+  verificationsCount    Int       @default(0) // Cumulative count
+  periodStart           DateTime
+  periodEnd             DateTime?
+  createdAt             DateTime  @default(now())
+  
+  @@index([periodStart])
   @@index([createdAt])
 }
 

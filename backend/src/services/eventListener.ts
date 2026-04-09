@@ -86,12 +86,6 @@ export async function eventListenerService(
         },
       });
 
-      // Update institution credential count
-      await prisma.institution.update({
-        where: { id: institutionRecord.id },
-        data: { credentialCount: { increment: 1 } },
-      });
-
       // Log audit event
       await logAuditEvent(
         'CREDENTIAL_MINTED',
