@@ -6,7 +6,7 @@ import { ethers } from 'ethers';
 import * as fs from 'fs';
 import * as path from 'path';
 import dotenv from 'dotenv';
-import { uploadCredentialMetadata, generateCredentialMetadata } from '../ipfs-upload';
+import { uploadCredentialMetadata, generateCredentialMetadata } from '../ipfs-upload.js';
 
 dotenv.config();
 

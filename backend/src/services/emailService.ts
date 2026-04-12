@@ -3,7 +3,7 @@ import sgMail from '@sendgrid/mail';
 
 // Email service for EduChain notifications
 export class EmailService {
-  private transporter: nodemailer.Transporter;
+  private transporter?: nodemailer.Transporter;
   private sendgridConfigured: boolean = false;
 
   constructor() {
@@ -219,6 +219,9 @@ export class EmailService {
           html,
         });
       } else {
+        if (!this.transporter) {
+          throw new Error('SMTP transporter not configured');
+        }
         await this.transporter.sendMail({
           from: process.env.FROM_EMAIL || 'noreply@educhain.edu',
           to,

@@ -38,6 +38,53 @@ export interface CredentialImportData {
   description?: string;
 }
 
+function parseJobStatus(status: string): BulkImportJob["status"] {
+  if (
+    status === "pending" ||
+    status === "processing" ||
+    status === "completed" ||
+    status === "failed"
+  ) {
+    return status;
+  }
+  return "failed";
+}
+
+function mapRowToBulkImportJob(row: {
+  jobId: string;
+  institutionAddress: string;
+  status: string;
+  totalRows: number;
+  processedRows: number;
+  successCount: number;
+  failureCount: number;
+  errors: string;
+  createdAt: Date;
+  completedAt: Date | null;
+}): BulkImportJob {
+  let errors: BulkImportJob["errors"] = [];
+  try {
+    const parsed = JSON.parse(row.errors || "[]") as unknown;
+    if (Array.isArray(parsed)) {
+      errors = parsed as BulkImportJob["errors"];
+    }
+  } catch {
+    errors = [];
+  }
+  return {
+    jobId: row.jobId,
+    institutionAddress: row.institutionAddress,
+    status: parseJobStatus(row.status),
+    totalRows: row.totalRows,
+    processedRows: row.processedRows,
+    successCount: row.successCount,
+    failureCount: row.failureCount,
+    errors,
+    createdAt: row.createdAt,
+    completedAt: row.completedAt ?? undefined,
+  };
+}
+
 class BulkImportService extends EventEmitter {
   private prisma: PrismaClient;
 
@@ -250,7 +297,7 @@ class BulkImportService extends EventEmitter {
       }
     );
 
-    return job;
+    return mapRowToBulkImportJob(job);
   }
 
   /**
@@ -320,16 +367,6 @@ class BulkImportService extends EventEmitter {
             credentialData,
             institutionAddress
           );
-
-          // Create claim token for this student
-          const claimToken = await this.prisma.claimToken.create({
-            data: {
-              credentialId: "", // Will be set after credential is created
-              studentEmail: credentialData.studentEmail || "",
-              studentName: credentialData.studentName,
-              expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
-            }
-          });
 
           successCount++;
         } catch (error: any) {
@@ -432,9 +469,10 @@ class BulkImportService extends EventEmitter {
    * Gets job status
    */
   async getJobStatus(jobId: string): Promise<BulkImportJob | null> {
-    return this.prisma.bulkImportJob.findUnique({
+    const row = await this.prisma.bulkImportJob.findUnique({
       where: { jobId },
     });
+    return row ? mapRowToBulkImportJob(row) : null;
   }
 
   /**
@@ -444,21 +482,23 @@ class BulkImportService extends EventEmitter {
     institutionAddress: string,
     limit: number = 10
   ): Promise<BulkImportJob[]> {
-    return this.prisma.bulkImportJob.findMany({
+    const rows = await this.prisma.bulkImportJob.findMany({
       where: { institutionAddress },
       orderBy: { createdAt: "desc" },
       take: limit,
     });
+    return rows.map(mapRowToBulkImportJob);
   }
 
   /**
    * Cancels a pending job
    */
   async cancelJob(jobId: string): Promise<BulkImportJob> {
-    return this.prisma.bulkImportJob.update({
+    const row = await this.prisma.bulkImportJob.update({
       where: { jobId },
       data: { status: "failed" },
     });
+    return mapRowToBulkImportJob(row);
   }
 }
 

@@ -61,10 +61,7 @@ export function institutionRoute(prisma: PrismaClient) {
 
       const existingSignup = await prisma.institutionSignup.findFirst({ 
         where: { 
-          adminEmail: {
-            equals: adminEmail.toLowerCase(),
-            mode: 'insensitive'
-          }
+          adminEmail: adminEmail.toLowerCase(),
         } 
       });
       if (existingSignup) {

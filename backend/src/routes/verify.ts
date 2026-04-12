@@ -186,7 +186,7 @@ export function verifyRoute(prisma: PrismaClient) {
             },
           },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { timestamp: 'desc' },
         take: Math.min(Number(limit), 100),
         skip: Number(offset),
       });
@@ -200,9 +200,11 @@ export function verifyRoute(prisma: PrismaClient) {
         tokenId: log.tokenId.toString(),
         status: log.status,
         revoked: log.revoked,
-        verifiedAt: log.createdAt.toISOString(),
+        verifiedAt: log.timestamp.toISOString(),
         institution: log.credential?.institution?.name || 'Unknown',
-        studentName: log.credential?.studentEmail?.split('@')[0] || 'Unknown',
+        studentName: log.credential?.studentAddress
+          ? `${log.credential.studentAddress.slice(0, 6)}…${log.credential.studentAddress.slice(-4)}`
+          : 'Unknown',
       }));
 
       res.json({
@@ -240,7 +242,7 @@ export function verifyRoute(prisma: PrismaClient) {
       // Calculate verifications by month
       const logsByMonth: Record<string, { total: number; valid: number; invalid: number }> = {};
       allLogs.forEach((log) => {
-        const date = new Date(log.createdAt);
+        const date = new Date(log.timestamp);
         const monthKey = date.toLocaleDateString('en-US', { month: 'short' });
         if (!logsByMonth[monthKey]) {
           logsByMonth[monthKey] = { total: 0, valid: 0, invalid: 0 };
@@ -293,7 +295,7 @@ export function verifyRoute(prisma: PrismaClient) {
         date.setDate(date.getDate() - i);
         const dateStr = date.toISOString().split('T')[0];
         const count = allLogs.filter(
-          (log) => log.createdAt.toISOString().split('T')[0] === dateStr
+          (log) => log.timestamp.toISOString().split('T')[0] === dateStr
         ).length;
         dailyActivity.push({ date: dateStr, verifications: count });
       }

@@ -1,9 +1,15 @@
 import express, { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { createUserWallet } from '../services/walletService';
+import crypto from 'crypto';
 
 const router = express.Router();
 const prisma = new PrismaClient();
+const CREDENTIALS_PROVIDER = 'credentials';
+
+function hashPassword(password: string): string {
+  return crypto.createHash('sha256').update(password).digest('hex');
+}
 
 /**
  * GET /api/users/me
@@ -126,6 +132,139 @@ router.post('/google', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error in Google OAuth:', error);
     res.status(500).json({ error: 'OAuth error' });
+  }
+});
+
+/**
+ * POST /api/users/credentials-auth
+ * Authenticate or register users for NextAuth Credentials provider.
+ *
+ * Body:
+ *  - mode: "signup" | "login"
+ *  - email: string
+ *  - password: string
+ *  - name?: string (required for signup)
+ *  - role?: "student" | "employer" | "institution" (optional for signup)
+ */
+router.post('/credentials-auth', async (req: Request, res: Response) => {
+  try {
+    const {
+      mode = 'login',
+      authMode,
+      email,
+      password,
+      name,
+      role,
+    } = req.body as {
+      mode?: 'signup' | 'login';
+      authMode?: 'signup' | 'login';
+      email?: string;
+      password?: string;
+      name?: string;
+      role?: 'student' | 'employer' | 'institution';
+    };
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+    const passwordHash = hashPassword(password);
+
+    const resolvedMode = authMode === 'signup' || mode === 'signup' ? 'signup' : 'login';
+
+    if (resolvedMode === 'signup') {
+      if (!name || !name.trim()) {
+        return res.status(400).json({ error: 'Name is required for signup' });
+      }
+
+      const existingUser = await prisma.user.findFirst({
+        where: { email: normalizedEmail, deletedAt: null },
+      });
+
+      if (existingUser) {
+        return res.status(409).json({ error: 'User already exists' });
+      }
+
+      const wallet = createUserWallet(normalizedEmail);
+      const resolvedRole =
+        role === 'employer'
+          ? 'employer'
+          : role === 'institution'
+            ? 'institution_admin'
+            : 'student';
+
+      const user = await prisma.user.create({
+        data: {
+          email: normalizedEmail,
+          name: name.trim(),
+          role: resolvedRole,
+          walletAddress: wallet.address,
+        },
+      });
+
+      await prisma.account.create({
+        data: {
+          userId: user.id,
+          provider: CREDENTIALS_PROVIDER,
+          providerAccountId: normalizedEmail,
+          type: 'credentials',
+          access_token: passwordHash,
+        },
+      });
+
+      return res.json({
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        image: user.image,
+      });
+    }
+
+    let user = await prisma.user.findFirst({
+      where: { email: normalizedEmail, deletedAt: null },
+    });
+
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const credentialsAccount = await prisma.account.findFirst({
+      where: {
+        userId: user.id,
+        provider: CREDENTIALS_PROVIDER,
+        providerAccountId: normalizedEmail,
+      },
+    });
+
+    if (!credentialsAccount?.access_token) {
+      return res.status(401).json({ error: 'Credentials login is not set up for this user' });
+    }
+
+    if (credentialsAccount.access_token !== passwordHash) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    // Backfill wallet for legacy users missing one.
+    if (!user.walletAddress) {
+      const generatedWallet = createUserWallet(normalizedEmail);
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: { walletAddress: generatedWallet.address },
+      });
+    }
+
+    return res.json({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      image: user.image,
+    });
+  } catch (error) {
+    console.error('Error in credentials auth:', error);
+    res.status(500).json({ error: 'Credentials auth failed' });
   }
 });
 

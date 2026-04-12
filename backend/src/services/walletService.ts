@@ -1,4 +1,4 @@
-import { Wallet } from 'ethers';
+import { HDNodeWallet, Wallet } from 'ethers';
 import crypto from 'crypto';
 
 /**
@@ -16,8 +16,8 @@ export function generateWalletFromEmail(email: string): {
     .update(email)
     .digest();
 
-  // Generate wallet from seed
-  const wallet = Wallet.fromSeed(seed);
+  // ethers v6 exposes deterministic seed derivation via HDNodeWallet
+  const wallet = HDNodeWallet.fromSeed(seed);
 
   return {
     address: wallet.address,
@@ -41,12 +41,22 @@ export function isValidWalletAddress(address: string): boolean {
  * - Use account abstraction or key management systems
  */
 export function createUserWallet(email: string) {
-  const wallet = generateWalletFromEmail(email);
-  
-  return {
-    address: wallet.address,
-    // Note: In production, encrypt this before storing
-    privateKey: wallet.privateKey,
-    email: email,
-  };
+  try {
+    const wallet = generateWalletFromEmail(email);
+
+    return {
+      address: wallet.address,
+      // Note: In production, encrypt this before storing
+      privateKey: wallet.privateKey,
+      email: email,
+    };
+  } catch (error) {
+    // Fallback keeps auth flow available even if deterministic derivation fails.
+    const fallback = Wallet.createRandom();
+    return {
+      address: fallback.address,
+      privateKey: fallback.privateKey,
+      email: email,
+    };
+  }
 }

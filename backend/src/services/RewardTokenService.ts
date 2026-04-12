@@ -1,6 +1,5 @@
 import { ethers } from "ethers";
 import { PrismaClient } from "@prisma/client";
-import { Decimal } from "@prisma/client/runtime/library";
 
 /**
  * RewardTokenService
@@ -47,7 +46,7 @@ export class RewardTokenService {
     this.tokenABI = tokenABI;
 
     // Merge custom config with defaults
-    this.rewardConfig = { ...DEFAULT_REWARD_CONFIG, ...customConfig };
+    this.rewardConfig = { ...DEFAULT_REWARD_CONFIG, ...customConfig } as RewardConfig;
 
     // Initialize contract
     this.tokenContract = new ethers.Contract(
@@ -95,7 +94,7 @@ export class RewardTokenService {
       const tokenReward = await this.prisma.tokenReward.create({
         data: {
           recipientAddress,
-          amount: new Decimal(amount),
+          amount,
           reason,
           credentialId: relatedId?.credentialId,
           verificationLogId: relatedId?.verificationLogId,
@@ -136,7 +135,7 @@ export class RewardTokenService {
         await this.prisma.tokenReward.create({
           data: {
             recipientAddress,
-            amount: new Decimal(customAmount || this.rewardConfig[reason]?.amount || 0),
+            amount: customAmount || this.rewardConfig[reason]?.amount || 0,
             reason,
             status: "failed",
             metadata: JSON.stringify({
@@ -255,10 +254,7 @@ export class RewardTokenService {
       orderBy: { createdAt: "desc" },
     });
 
-    const total = rewards.reduce(
-      (sum, reward) => sum.plus(reward.amount),
-      new Decimal(0)
-    );
+    const total = rewards.reduce((sum, reward) => sum + reward.amount, 0);
 
     return { total, rewards };
   }
@@ -267,7 +263,7 @@ export class RewardTokenService {
    * Update reward configuration
    */
   updateConfig(newConfig: Partial<RewardConfig>) {
-    this.rewardConfig = { ...this.rewardConfig, ...newConfig };
+    this.rewardConfig = { ...this.rewardConfig, ...newConfig } as RewardConfig;
   }
 
   /**

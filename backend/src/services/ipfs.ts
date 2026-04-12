@@ -59,9 +59,12 @@ class IPFSService {
           const response = await fetch(gateway, { signal: AbortSignal.timeout(5000) });
 
           if (response.ok) {
-            const data = await response.json();
+            const data: unknown = await response.json();
             console.log(`✅ Retrieved from IPFS: ${cid}`);
-            return data;
+            if (typeof data === 'object' && data !== null) {
+              return data;
+            }
+            throw new Error('Invalid JSON payload from gateway');
           }
         } catch (e) {
           // Try next gateway

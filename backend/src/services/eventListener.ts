@@ -6,6 +6,10 @@
 import { PrismaClient } from '@prisma/client';
 import { ethers } from 'ethers';
 
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function eventListenerService(
   prisma: PrismaClient,
   contractAddress: string,
@@ -110,7 +114,7 @@ export async function eventListenerService(
         'CREDENTIAL_MINTED',
         to?.toLowerCase() || 'unknown',
         'student',
-        { error: error.message, tokenId: tokenId?.toString() },
+        { error: toErrorMessage(error), tokenId: tokenId?.toString() },
         'failed'
       );
     }
@@ -157,7 +161,7 @@ export async function eventListenerService(
         'CREDENTIAL_REVOKED',
         institution?.toLowerCase() || 'unknown',
         'institution_admin',
-        { error: error.message, tokenId: tokenId?.toString() },
+        { error: toErrorMessage(error), tokenId: tokenId?.toString() },
         'failed'
       );
     }
@@ -217,7 +221,7 @@ export async function eventListenerService(
         'CREDENTIAL_VERIFIED',
         verifier?.toLowerCase() || 'unknown',
         'verifier',
-        { error: error.message, tokenId: tokenId?.toString() },
+        { error: toErrorMessage(error), tokenId: tokenId?.toString() },
         'failed'
       );
     }
@@ -263,7 +267,7 @@ export async function eventListenerService(
         'INSTITUTION_ONBOARDED',
         adminAddress?.toLowerCase() || 'unknown',
         'owner',
-        { error: error.message, institutionAddress: institutionAddress?.toLowerCase() },
+        { error: toErrorMessage(error), institutionAddress: institutionAddress?.toLowerCase() },
         'failed'
       );
     }

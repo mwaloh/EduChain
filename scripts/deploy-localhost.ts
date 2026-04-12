@@ -4,6 +4,7 @@
  */
 
 import hre from 'hardhat';
+import type { Contract } from 'ethers';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -55,7 +56,8 @@ async function main() {
   // Test: Onboard first institution (using deployer as institution admin)
   console.log('🧪 Testing: Onboarding deployer as first institution...');
   try {
-    const tx = await contract.onboardInstitution(
+    const c = contract as unknown as Contract;
+    const tx = await c.getFunction('onboardInstitution')(
       deployerAddress,
       deployerAddress,
       'Test University',
@@ -63,8 +65,9 @@ async function main() {
     );
     await tx.wait();
     console.log('✅ Test institution onboarded successfully!\n');
-  } catch (error: any) {
-    console.log(`⚠️  Could not auto-onboard: ${error.message}\n`);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.log(`⚠️  Could not auto-onboard: ${msg}\n`);
   }
 
   // Next steps

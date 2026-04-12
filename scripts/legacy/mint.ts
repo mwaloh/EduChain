@@ -1,4 +1,4 @@
-import { ethers } from "hardhat";
+import hre from "hardhat";
 
 async function main() {
   const {
@@ -18,10 +18,10 @@ async function main() {
   const issuedOn = ISSUED_ON ? BigInt(ISSUED_ON) : BigInt(Math.floor(Date.now() / 1000));
   const expiresOn = EXPIRES_ON ? BigInt(EXPIRES_ON) : BigInt(0);
 
-  const [issuer] = await ethers.getSigners();
+  const [issuer] = await hre.ethers.getSigners();
   console.log("Issuer:", issuer.address);
 
-  const contract = await ethers.getContractAt("AcademicCredential", CONTRACT_ADDRESS);
+  const contract = await hre.ethers.getContractAt("AcademicCredential", CONTRACT_ADDRESS);
   const tx = await contract.mint(TO, BigInt(TOKEN_ID), IPFS_CID, issuedOn, expiresOn);
   console.log("Mint tx sent:", tx.hash);
   await tx.wait();

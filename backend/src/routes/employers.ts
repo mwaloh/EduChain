@@ -296,23 +296,23 @@ export function employersRoute(prisma: PrismaClient) {
       // Get employer
       const employer = await prisma.employer.findUnique({
         where: { id },
-        include: {
-          verificationLogs: {
-            orderBy: { timestamp: 'desc' },
-            take: 100,
-          },
-        },
       });
 
       if (!employer || employer.deletedAt || !employer.isApproved) {
         return res.status(404).json({ error: 'Employer not found or not approved' });
       }
 
-      // Get statistics
+      // Get statistics (verifierAddress on-chain may be wallet; employer flow uses email in some paths)
       const allLogs = await prisma.verificationLog.findMany({
         where: {
-          verifierAddress: employer.email,
+          verifierAddress: employer.email.toLowerCase(),
         },
+      });
+
+      const recentLogs = await prisma.verificationLog.findMany({
+        where: { verifierAddress: employer.email.toLowerCase() },
+        orderBy: { timestamp: 'desc' },
+        take: 20,
       });
 
       res.json({
@@ -325,12 +325,12 @@ export function employersRoute(prisma: PrismaClient) {
         },
         stats: {
           totalVerifications: allLogs.length,
-          approvedCount: allLogs.filter(l => l.status === 'verified').length,
-          rejectedCount: allLogs.filter(l => l.status === 'rejected').length,
+          approvedCount: allLogs.filter((l) => l.status === 'valid').length,
+          rejectedCount: allLogs.filter((l) => l.status === 'invalid' || l.status === 'revoked').length,
         },
-        recentVerifications: employer.verificationLogs.slice(0, 20).map((log) => ({
+        recentVerifications: recentLogs.map((log) => ({
           timestamp: log.timestamp,
-          credentials_verified: log.notes || 'Multiple',
+          credentials_verified: `Token ${log.tokenId.toString()}`,
           status: log.status,
         })),
       });

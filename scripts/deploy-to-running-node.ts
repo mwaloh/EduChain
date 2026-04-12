@@ -66,9 +66,10 @@ async function main() {
 
   console.log(`💾 Saved to: ${deploymentPath}\n`);
 
-  // Test onboarding
+  // Test onboarding (ABI method name depends on contract; cast for TS)
   try {
-    const tx = await contract.onboardInstitution(
+    const c = contract as ethers.Contract;
+    const tx = await c.getFunction('onboardInstitution')(
       deployerAddress,
       deployerAddress,
       'Test University',
@@ -76,8 +77,9 @@ async function main() {
     );
     await tx.wait();
     console.log('✅ Test institution onboarded!\n');
-  } catch (error: any) {
-    console.log(`⚠️  Auto-onboard: ${error.message}\n`);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.log(`⚠️  Auto-onboard: ${msg}\n`);
   }
 
   console.log('📝 Next steps:');

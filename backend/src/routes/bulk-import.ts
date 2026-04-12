@@ -1,4 +1,4 @@
-import { Router, Request, Response, Express } from "express";
+import { Router, Request, Response } from "express";
 import multer from "multer";
 import { PrismaClient } from "@prisma/client";
 import BulkImportService from "../services/bulkImportService";
@@ -81,7 +81,7 @@ router.post("/upload", upload.single("file"), async (req: Request, res: Response
       // Start email sending in background
       setImmediate(async () => {
         try {
-          await sendBulkClaimEmails(job.jobId, institutionAddress);
+          await sendBulkClaimEmails(prisma, job.jobId, institutionAddress);
         } catch (error) {
           console.error('Failed to send bulk emails:', error);
         }
@@ -200,8 +200,9 @@ router.get("/download/:jobId", async (req: Request, res: Response) => {
     // Format results as CSV
     let csv = "Row,StudentAddress,Status,Error\n";
 
-    // Parse errors from job record
-    const errors = JSON.parse(job.errors || "[]");
+    const errors = Array.isArray(job.errors)
+      ? job.errors
+      : JSON.parse(String(job.errors || "[]"));
 
     // Add error rows
     for (const error of errors) {
@@ -227,7 +228,11 @@ router.get("/download/:jobId", async (req: Request, res: Response) => {
 /**
  * Sends claim emails for all students in a bulk import job
  */
-async function sendBulkClaimEmails(jobId: string, institutionAddress: string) {
+async function sendBulkClaimEmails(
+  prisma: PrismaClient,
+  jobId: string,
+  _institutionAddress: string
+) {
   try {
     console.log(`[EMAIL] Starting bulk email send for job ${jobId}`);
 
@@ -266,8 +271,9 @@ async function sendBulkClaimEmails(jobId: string, institutionAddress: string) {
           studentEmail: token.studentEmail,
           studentName: token.studentName || 'Student',
           institutionName: token.credential?.institution?.name || 'Your Institution',
+          degree: 'Your Academic Credential',
+          claimToken: token.token,
           claimUrl,
-          credentialName: 'Your Academic Credential', // TODO: Get from metadata
         });
 
         sentCount++;

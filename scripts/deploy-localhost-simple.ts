@@ -3,6 +3,7 @@
  */
 
 import hre from 'hardhat';
+import type { Contract } from 'ethers';
 
 async function main() {
   console.log('🚀 Deploying EduChain contract to local network...\n');
@@ -21,9 +22,9 @@ async function main() {
   console.log(`   NEXT_PUBLIC_CONTRACT_ADDRESS=${address}`);
   console.log(`   NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8545\n`);
 
-  // Test onboarding
   try {
-    const tx = await contract.onboardInstitution(
+    const c = contract as unknown as Contract;
+    const tx = await c.getFunction('onboardInstitution')(
       deployer.address,
       deployer.address,
       'Test University',
@@ -31,8 +32,9 @@ async function main() {
     );
     await tx.wait();
     console.log('✅ Test institution onboarded!\n');
-  } catch (error: any) {
-    console.log(`⚠️  Auto-onboard failed: ${error.message}\n`);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.log(`⚠️  Auto-onboard failed: ${msg}\n`);
   }
 }
 

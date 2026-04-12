@@ -1,4 +1,5 @@
 require('dotenv').config();
+require('@nomicfoundation/hardhat-toolbox');
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY || '';
 const RPC_URL = process.env.RPC_URL || 'http://127.0.0.1:8545';

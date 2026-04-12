@@ -48,10 +48,6 @@ export function auditRoute(prisma: PrismaClient) {
           orderBy: { timestamp: 'desc' },
           skip,
           take: limitNum,
-          include: {
-            verificationLog: true,
-            credential: true
-          }
         }),
         prisma.auditLog.count({ where })
       ]);

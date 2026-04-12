@@ -94,7 +94,8 @@ export function credentialsRoute(prisma: PrismaClient) {
           where: { id: institutionId },
         });
 
-        if (institutionRecord?.walletAddress && student.walletAddress) {
+        const institutionWallet = institutionRecord?.address;
+        if (institutionWallet && student.walletAddress) {
           // Reward student for receiving credential
           await rewardService.rewardParticipation(
             student.walletAddress,
@@ -105,7 +106,7 @@ export function credentialsRoute(prisma: PrismaClient) {
 
           // Reward institution for issuing credential
           await rewardService.rewardParticipation(
-            institutionRecord.walletAddress,
+            institutionWallet,
             "CREDENTIAL_ISSUED_INSTITUTION",
             undefined,
             { credentialId: credential.id }

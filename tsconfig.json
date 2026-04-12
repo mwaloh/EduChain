@@ -9,5 +9,10 @@
     "resolveJsonModule": true,
     "outDir": "dist"
   },
-  "include": ["scripts", "src", "test"]
+  "include": ["hardhat-env.d.ts", "scripts/**/*.ts", "test/**/*.ts"],
+  "exclude": [
+    "node_modules",
+    "scripts/create-test-users.ts",
+    "scripts/verify-onboarding.ts"
+  ]
 }

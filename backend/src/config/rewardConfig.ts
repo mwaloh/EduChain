@@ -124,11 +124,15 @@ export function isRewardEnabled(reason: string): boolean {
 /**
  * Get all enabled rewards
  */
-export function getEnabledRewards() {
-  return Object.entries(REWARD_CATEGORIES)
-    .filter(([_, config]) => config.enabled)
-    .reduce((acc, [key, config]) => {
-      acc[key] = config;
-      return acc;
-    }, {} as typeof REWARD_CATEGORIES);
+type RewardKey = keyof typeof REWARD_CATEGORIES;
+
+export function getEnabledRewards(): Partial<Record<RewardKey, RewardAmount>> {
+  const out: Partial<Record<RewardKey, RewardAmount>> = {};
+  for (const key of Object.keys(REWARD_CATEGORIES) as RewardKey[]) {
+    const config = REWARD_CATEGORIES[key];
+    if (config.enabled) {
+      out[key] = config as unknown as RewardAmount;
+    }
+  }
+  return out;
 }

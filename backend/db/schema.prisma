@@ -235,6 +235,27 @@ model Analytics {
   @@index([date])
 }
 
+model Employer {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  contactName   String
+  contactPhone  String
+  industry      String
+  location      String
+  website       String?
+  description   String?
+  isApproved    Boolean   @default(false)
+  approvedAt    DateTime?
+  deletedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([email])
+  @@index([isApproved])
+  @@index([deletedAt])
+}
+
 model FraudAttempt {
   id              String      @id @default(cuid())
   tokenId         BigInt
