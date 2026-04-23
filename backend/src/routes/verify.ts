@@ -19,9 +19,8 @@ export function verifyRoute(prisma: PrismaClient) {
 
   const provider = new ethers.JsonRpcProvider(RPC_URL);
 
-  // Contract ABI (minimal for verification)
+  // Contract ABI (read-only verification)
   const CONTRACT_ABI = [
-    'function verify(uint256 tokenId) external returns (uint8)',
     'function getCredentialStatus(uint256 tokenId) external view returns ((bool,uint64,uint64,string,string,address))',
     'function ownerOf(uint256 tokenId) external view returns (address)',
     'event CredentialVerified(address indexed verifier, uint256 indexed tokenId, address indexed institution, uint256 timestamp, uint8 status)',
@@ -43,24 +42,38 @@ export function verifyRoute(prisma: PrismaClient) {
 
       const tokenIdBigInt = BigInt(tokenId);
 
-      // Verify on-chain
-      const status = await contract.verify(tokenIdBigInt);
       const credentialStatus = await contract.getCredentialStatus(tokenIdBigInt);
+      let owner: string | null = null;
 
-      // Parse status enum
-      const statusMap: Record<number, string> = {
-        0: 'valid',
-        1: 'revoked',
-        2: 'expired',
-        3: 'invalid',
-      };
+      try {
+        owner = await contract.ownerOf(tokenIdBigInt);
+      } catch {
+        owner = null;
+      }
 
-      const statusString = statusMap[Number(status)] || 'unknown';
+      const isExpired =
+        credentialStatus.expiresOn > BigInt(0) &&
+        BigInt(Math.floor(Date.now() / 1000)) > credentialStatus.expiresOn;
+
+      const statusString = credentialStatus.revoked
+        ? 'revoked'
+        : isExpired
+        ? 'expired'
+        : owner
+        ? 'valid'
+        : 'invalid';
 
       // Get institution info
-      const institution = await prisma.institution.findUnique({
-        where: { address: credentialStatus.institution.toLowerCase() },
-      });
+      const institutionAddress =
+        typeof credentialStatus.institution === 'string'
+          ? credentialStatus.institution.toLowerCase()
+          : '';
+
+      const institution = institutionAddress
+        ? await prisma.institution.findUnique({
+            where: { address: institutionAddress },
+          })
+        : null;
 
       // Log verification
       const credential = await prisma.credential.findUnique({
@@ -114,6 +127,9 @@ export function verifyRoute(prisma: PrismaClient) {
         tokenId: tokenId.toString(),
         status: statusString,
         revoked: credentialStatus.revoked,
+        issuedOn: credentialStatus.issuedOn
+          ? new Date(Number(credentialStatus.issuedOn) * 1000).toISOString()
+          : null,
         expiresOn: credentialStatus.expiresOn
           ? new Date(Number(credentialStatus.expiresOn) * 1000).toISOString()
           : null,
@@ -142,9 +158,16 @@ export function verifyRoute(prisma: PrismaClient) {
         credentialStatus.expiresOn > 0 &&
         BigInt(Math.floor(Date.now() / 1000)) > credentialStatus.expiresOn;
 
-      const institution = await prisma.institution.findUnique({
-        where: { address: credentialStatus.institution.toLowerCase() },
-      });
+      const institutionAddress =
+        typeof credentialStatus.institution === 'string'
+          ? credentialStatus.institution.toLowerCase()
+          : '';
+
+      const institution = institutionAddress
+        ? await prisma.institution.findUnique({
+            where: { address: institutionAddress },
+          })
+        : null;
 
       res.json({
         tokenId: req.params.tokenId,

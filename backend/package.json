@@ -10,6 +10,8 @@
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
+    "backfill:students:meru": "tsx scripts/backfill-students-to-meru.ts",
+    "smoke:student-link": "tsx scripts/smoke-student-link.ts",
     "test:setup": "tsx scripts/verify-onboarding.ts",
     "test:users": "tsx scripts/create-test-users.ts",
     "test:onboarding": "npm run test:setup && npm run test:users"

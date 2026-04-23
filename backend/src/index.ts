@@ -7,7 +7,6 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
-import { ethers } from 'ethers';
 import rateLimit from 'express-rate-limit';
 
 import { verifyRoute } from './routes/verify';
@@ -24,8 +23,10 @@ import { studentsRoute } from './routes/students';
 import { credentialsRoute } from './routes/credentials';
 import { employersRoute } from './routes/employers';
 import usersRouter from './routes/users';
-import { eventListenerService } from './services/eventListener';import rewardsRouter from './routes/rewards';
+import { eventListenerService } from './services/eventListener';
+import rewardsRouter from './routes/rewards';
 import { initializeRewardService } from './services/rewardServiceInit';
+
 dotenv.config();
 
 const app = express();
@@ -45,7 +46,7 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // Health check
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
@@ -67,7 +68,7 @@ app.use('/api/admin', adminRoute(prisma));
 app.use('/api/rewards', rewardsRouter);
 
 // Error handling
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err.stack);
   res.status(500).json({ error: 'Internal server error' });
 });
@@ -79,17 +80,17 @@ const RPC_URL = process.env.RPC_URL;
 if (CONTRACT_ADDRESS && RPC_URL) {
   eventListenerService(prisma, CONTRACT_ADDRESS, RPC_URL).catch(console.error);
 } else {
-  console.warn('⚠️  Contract address or RPC URL not set. Event listener disabled.');
+  console.warn('Contract address or RPC URL not set. Event listener disabled.');
 }
 
 // Initialize reward service
 initializeRewardService(prisma)
   .then(() => {
-    console.log('✅ Token Reward Service initialized successfully');
+    console.log('Token Reward Service initialized successfully');
   })
   .catch((error) => {
     console.warn(
-      '⚠️  Failed to initialize Reward Service. Token rewards will be disabled:',
+      'Failed to initialize Reward Service. Token rewards will be disabled:',
       error.message
     );
   });
@@ -97,12 +98,12 @@ initializeRewardService(prisma)
 // Start server
 const PORT = process.env.PORT || 9999;
 app.listen(PORT, () => {
-  console.log(`🚀 EduChain Analytics Backend running on port ${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/health`);
-  console.log(`🔍 Verify API: http://localhost:${PORT}/api/verify`);
-  console.log(`📦 IPFS API: http://localhost:${PORT}/api/ipfs`);
-  console.log(`📈 Analytics API: http://localhost:${PORT}/api/analytics`);
-  console.log(`📋 Audit API: http://localhost:${PORT}/api/audit`);
+  console.log(`EduChain Analytics Backend running on port ${PORT}`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`Verify API: http://localhost:${PORT}/api/verify`);
+  console.log(`IPFS API: http://localhost:${PORT}/api/ipfs`);
+  console.log(`Analytics API: http://localhost:${PORT}/api/analytics`);
+  console.log(`Audit API: http://localhost:${PORT}/api/audit`);
 });
 
 // Graceful shutdown
@@ -113,4 +114,3 @@ process.on('SIGTERM', async () => {
 });
 
 export default app;
-

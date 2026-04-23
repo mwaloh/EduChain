@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { emailService } from '../services/emailService';
 import crypto from 'crypto';
+import { ensureCanonicalMeruInstitution, MERU_ALIASES, MERU_CODE } from '../utils/institutionDefaults';
 
 function parseOptionalNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -200,14 +201,29 @@ export function institutionRoute(prisma: PrismaClient) {
         });
       }
 
+      // Important: being linked to an institution is not enough.
+      // User must be an active institution admin to access institution portal context.
+      if (user.role !== 'institution_admin' || !user.institutionAdmin || !user.institutionAdmin.active || user.institutionAdmin.deletedAt) {
+        console.warn(`[INSTITUTION PROFILE] User ${user.email} is not an active institution admin.`);
+        return res.status(403).json({
+          error: 'You are not an institution admin for this institution.',
+        });
+      }
+
       if (user.institution.deletedAt) {
         console.warn(`[INSTITUTION PROFILE] User ${user.email}'s institution has been deleted.`);
         return res.status(404).json({ error: 'Your institution profile has been deleted.' });
       }
 
+      const normalizedInstitution =
+        user.institution.code === MERU_CODE || MERU_ALIASES.includes(user.institution.name)
+          ? await ensureCanonicalMeruInstitution(prisma, { address: user.institution.address })
+          : user.institution;
+
       res.json({
         success: true,
-        institution: user.institution,
+        isInstitutionAdmin: true,
+        institution: normalizedInstitution,
         user: {
           id: user.id,
           email: user.email,

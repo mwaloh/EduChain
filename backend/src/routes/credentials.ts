@@ -6,6 +6,143 @@ import { getRewardService } from '../services/rewardServiceInit';
 export function credentialsRoute(prisma: PrismaClient) {
   const router = Router();
 
+  async function buildCredentialDetails(idOrTokenId: { id?: string; tokenId?: bigint }) {
+    const credential = await prisma.credential.findFirst({
+      where: {
+        ...(idOrTokenId.id ? { id: idOrTokenId.id } : {}),
+        ...(idOrTokenId.tokenId !== undefined ? { tokenId: idOrTokenId.tokenId } : {}),
+      },
+      include: {
+        institution: {
+          select: { id: true, name: true, code: true, locationText: true },
+        },
+        verificationLogs: {
+          orderBy: { timestamp: 'desc' },
+          take: 10,
+        },
+      },
+    });
+
+    if (!credential) {
+      return null;
+    }
+
+    const student = await prisma.studentProfile.findFirst({
+      where: {
+        walletAddress: credential.studentAddress,
+        institutionId: credential.institutionId,
+      },
+      select: {
+        email: true,
+        program: true,
+        yearOfStudy: true,
+        admissionNo: true,
+      },
+    });
+
+    return {
+      success: true,
+      credential: {
+        id: credential.id,
+        tokenId: credential.tokenId.toString(),
+        studentName:
+          credential.studentName ||
+          credential.studentEmail ||
+          student?.email ||
+          credential.studentAddress,
+        studentEmail: credential.studentEmail || student?.email || credential.studentAddress,
+        institutionName: credential.institutionName || credential.institution.name || 'Unknown',
+        degree: credential.degree || credential.program || student?.program || 'Academic Credential',
+        program: credential.program || student?.program || 'Unknown',
+        grade: credential.grade || null,
+        graduationYear: credential.graduationYear || null,
+        institution: credential.institution,
+        issuedOn: Math.floor(credential.issuedOn.getTime() / 1000),
+        expiresOn: credential.expiresOn ? Math.floor(credential.expiresOn.getTime() / 1000) : 0,
+        revoked: credential.revoked,
+        revocationReason: credential.revocationReason || null,
+        ipfsCid: credential.ipfsCid,
+        createdAt: credential.createdAt.toISOString(),
+        fallbackMetadata: {
+          studentName:
+            credential.studentName ||
+            credential.studentEmail ||
+            student?.email ||
+            credential.studentAddress,
+          degree: credential.degree || credential.program || student?.program || 'Academic Credential',
+          institution: credential.institutionName || credential.institution.name || 'Unknown',
+          grade: credential.grade || 'N/A',
+          issueDate: credential.issuedOn.toISOString(),
+          expiryDate: credential.expiresOn?.toISOString() || null,
+          program: credential.program || student?.program || 'Unknown',
+          graduationYear: credential.graduationYear || null,
+        },
+      },
+      verificationLogs: credential.verificationLogs.map((log) => ({
+        timestamp: log.timestamp.toISOString(),
+        verifierAddress: log.verifierAddress,
+        status: log.status,
+      })),
+    };
+  }
+
+  async function ensureStudentProfileForCredential(
+    institutionId: string,
+    studentEmail: string
+  ) {
+    let student = await prisma.studentProfile.findFirst({
+      where: {
+        institutionId,
+        email: studentEmail,
+        deletedAt: null,
+      },
+    });
+
+    if (student) {
+      return student;
+    }
+
+    const normalizedEmail = studentEmail.toLowerCase().trim();
+    const user = await prisma.user.findFirst({
+      where: {
+        email: normalizedEmail,
+        role: 'student',
+        deletedAt: null,
+      },
+    });
+
+    if (!user) {
+      return null;
+    }
+
+    const updatedUser =
+      user.institutionId !== institutionId
+        ? await prisma.user.update({
+            where: { id: user.id },
+            data: { institutionId },
+          })
+        : user;
+
+    student = await prisma.studentProfile.upsert({
+      where: { userId: updatedUser.id },
+      update: {
+        institutionId,
+        email: normalizedEmail,
+        walletAddress: updatedUser.walletAddress || null,
+        status: 'active',
+      },
+      create: {
+        institutionId,
+        userId: updatedUser.id,
+        email: normalizedEmail,
+        walletAddress: updatedUser.walletAddress || null,
+        status: 'active',
+      },
+    });
+
+    return student;
+  }
+
   /**
    * POST /api/credentials/record
    * Record a credential minted for a student
@@ -15,13 +152,17 @@ export function credentialsRoute(prisma: PrismaClient) {
     try {
       const {
         studentEmail,
+        studentName,
+        institutionName,
         tokenId,
         institutionId,
         ipfsCid,
         degree,
         program,
+        grade,
         issuedOn,
         expiresOn,
+        graduationYear,
       } = req.body;
 
       const adminEmail = (req.headers['x-user-email'] as string) || '';
@@ -43,25 +184,32 @@ export function credentialsRoute(prisma: PrismaClient) {
         return res.status(403).json({ error: 'Unauthorized' });
       }
 
-      // Find the student
-      const student = await prisma.studentProfile.findFirst({
-        where: {
-          institutionId,
-          email: studentEmail,
-          deletedAt: null,
-        },
-      });
+      // Find the student profile; if missing, try to auto-link from signed-up user.
+      const student = await ensureStudentProfileForCredential(institutionId, studentEmail);
 
       if (!student) {
         return res.status(404).json({ error: 'Student not found' });
+      }
+
+      if (!student.walletAddress) {
+        return res.status(400).json({
+          error: 'Student does not have a wallet address linked yet',
+        });
       }
 
       // Record credential in database
       const credential = await prisma.credential.create({
         data: {
           tokenId: BigInt(tokenId),
-          studentAddress: student.walletAddress || '',
+          studentAddress: student.walletAddress,
           studentHash: '', // Would be computed from student data
+          studentName: studentName || null,
+          studentEmail: studentEmail.toLowerCase().trim(),
+          institutionName: institutionName || null,
+          degree: degree || null,
+          program: program || null,
+          grade: grade || null,
+          graduationYear: graduationYear ? Number(graduationYear) : null,
           ipfsCid,
           institutionId,
           issuedOn: new Date(issuedOn * 1000),
@@ -82,8 +230,12 @@ export function credentialsRoute(prisma: PrismaClient) {
         details: {
           tokenId,
           studentEmail,
+          studentName,
+          institutionName,
           program,
           degree,
+          grade,
+          graduationYear,
         },
       });
 
@@ -126,6 +278,13 @@ export function credentialsRoute(prisma: PrismaClient) {
           id: credential.id,
           tokenId: credential.tokenId.toString(),
           studentAddress: credential.studentAddress,
+          studentName: credential.studentName,
+          studentEmail: credential.studentEmail,
+          institutionName: credential.institutionName,
+          degree: credential.degree,
+          program: credential.program,
+          grade: credential.grade,
+          graduationYear: credential.graduationYear,
           issuedOn: credential.issuedOn,
           expiresOn: credential.expiresOn,
           revoked: credential.revoked,
@@ -145,20 +304,23 @@ export function credentialsRoute(prisma: PrismaClient) {
   router.get('/student/:email', async (req: Request, res: Response) => {
     try {
       const { email } = req.params;
-      const institutionId = (req.headers['x-institution-id'] as string) || '';
+      let institutionId = (req.headers['x-institution-id'] as string) || '';
+
+      if (!institutionId) {
+        const normalizedEmail = email.toLowerCase().trim();
+        const user = await prisma.user.findFirst({
+          where: { email: normalizedEmail, deletedAt: null },
+          select: { institutionId: true },
+        });
+        institutionId = user?.institutionId || '';
+      }
 
       if (!institutionId) {
         return res.status(400).json({ error: 'Institution ID required' });
       }
 
-      // Find student
-      const student = await prisma.studentProfile.findFirst({
-        where: {
-          email,
-          institutionId,
-          deletedAt: null,
-        },
-      });
+      // Find student profile; if missing, try to auto-link from signed-up user.
+      const student = await ensureStudentProfileForCredential(institutionId, email);
 
       if (!student) {
         return res.status(404).json({ error: 'Student not found' });
@@ -192,6 +354,13 @@ export function credentialsRoute(prisma: PrismaClient) {
         credentials: credentials.map((c) => ({
           id: c.id,
           tokenId: c.tokenId.toString(),
+          studentName: c.studentName,
+          studentEmail: c.studentEmail || student.email,
+          institutionName: c.institutionName || institution?.name || 'Unknown',
+          degree: c.degree || student.program || 'Academic Credential',
+          program: c.program || student.program || 'Unknown',
+          grade: c.grade,
+          graduationYear: c.graduationYear,
           issuedOn: c.issuedOn,
           expiresOn: c.expiresOn,
           revoked: c.revoked,
@@ -218,57 +387,35 @@ export function credentialsRoute(prisma: PrismaClient) {
   router.get('/:id', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
+      const result = await buildCredentialDetails({ id });
 
-      const credential = await prisma.credential.findUnique({
-        where: { id },
-        include: {
-          institution: {
-            select: { id: true, name: true, code: true, locationText: true },
-          },
-          verificationLogs: {
-            orderBy: { timestamp: 'desc' },
-            take: 10,
-          },
-        },
-      });
-
-      if (!credential) {
+      if (!result) {
         return res.status(404).json({ error: 'Credential not found' });
       }
 
-      // Find student by wallet address to get email
-      const student = await prisma.studentProfile.findFirst({
-        where: {
-          walletAddress: credential.studentAddress,
-          institutionId: credential.institutionId,
-        },
-        select: { email: true, program: true, yearOfStudy: true },
-      });
-
-      res.json({
-        success: true,
-        credential: {
-          id: credential.id,
-          tokenId: credential.tokenId.toString(),
-          studentEmail: student?.email || credential.studentAddress,
-          degree: 'Academic Credential', // Would be stored in credential metadata
-          program: student?.program || 'Unknown',
-          institution: credential.institution,
-          issuedOn: Math.floor(credential.issuedOn.getTime() / 1000),
-          expiresOn: credential.expiresOn ? Math.floor(credential.expiresOn.getTime() / 1000) : 0,
-          revoked: credential.revoked,
-          revocationReason: credential.revocationReason || null,
-          ipfsCid: credential.ipfsCid,
-          createdAt: credential.createdAt.toISOString(),
-        },
-        verificationLogs: credential.verificationLogs.map((log) => ({
-          timestamp: log.timestamp.toISOString(),
-          verifierAddress: log.verifierAddress,
-          status: log.status,
-        })),
-      });
+      res.json(result);
     } catch (error: any) {
       console.error('Error fetching credential:', error);
+      res.status(500).json({ error: 'Failed to fetch credential' });
+    }
+  });
+
+  /**
+   * GET /api/credentials/token/:tokenId
+   * Get credential details by token ID for verification fallbacks
+   */
+  router.get('/token/:tokenId', async (req: Request, res: Response) => {
+    try {
+      const tokenId = BigInt(req.params.tokenId);
+      const result = await buildCredentialDetails({ tokenId });
+
+      if (!result) {
+        return res.status(404).json({ error: 'Credential not found' });
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Error fetching credential by token ID:', error);
       res.status(500).json({ error: 'Failed to fetch credential' });
     }
   });

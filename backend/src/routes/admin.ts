@@ -1,8 +1,88 @@
 import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { ensureCanonicalMeruInstitution } from '../utils/institutionDefaults';
 
 export function adminRoute(prisma: PrismaClient) {
   const router = Router();
+
+  async function getOrCreateMeruInstitution() {
+    return ensureCanonicalMeruInstitution(prisma);
+  }
+
+  async function backfillStudentsToMeru() {
+    const meru = await getOrCreateMeruInstitution();
+    const students = await prisma.user.findMany({
+      where: { role: 'student', deletedAt: null },
+      select: { id: true, email: true, walletAddress: true, institutionId: true },
+    });
+
+    let usersLinked = 0;
+    let profilesUpserted = 0;
+
+    for (const user of students) {
+      if (!user.institutionId || user.institutionId !== meru.id) {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { institutionId: meru.id },
+        });
+        usersLinked++;
+      }
+
+      const existingProfile = await prisma.studentProfile.findFirst({
+        where: {
+          OR: [{ userId: user.id }, { email: user.email }],
+          deletedAt: null,
+        },
+      });
+
+      if (existingProfile) {
+        await prisma.studentProfile.update({
+          where: { id: existingProfile.id },
+          data: {
+            userId: user.id,
+            institutionId: meru.id,
+            email: user.email,
+            walletAddress: user.walletAddress || existingProfile.walletAddress,
+            status: existingProfile.status || 'active',
+          },
+        });
+      } else {
+        await prisma.studentProfile.create({
+          data: {
+            userId: user.id,
+            institutionId: meru.id,
+            email: user.email,
+            walletAddress: user.walletAddress || null,
+            status: 'active',
+          },
+        });
+      }
+      profilesUpserted++;
+    }
+
+    const totalProfiles = await prisma.studentProfile.count({
+      where: { institutionId: meru.id, deletedAt: null },
+    });
+
+    return {
+      institution: { id: meru.id, name: meru.name, code: meru.code },
+      processedStudents: students.length,
+      usersLinked,
+      profilesUpserted,
+      totalProfiles,
+    };
+  }
+
+  function isAuthorizedBackfillRequest(req: any): boolean {
+    const headerEmail = String(req.headers['x-admin-email'] || '').trim().toLowerCase();
+    const headerPassword = String(req.headers['x-admin-password'] || '');
+    const configuredEmail = String(process.env.SUPER_ADMIN_EMAIL || process.env.ADMIN_REWARD_EMAIL || '').trim().toLowerCase();
+    const configuredPassword = String(process.env.SUPER_ADMIN_PASSWORD || process.env.ADMIN_REWARD_PASSWORD || '');
+
+    if (!configuredPassword) return false;
+    if (configuredEmail && headerEmail !== configuredEmail) return false;
+    return headerPassword === configuredPassword;
+  }
 
   router.get('/institutions/pending', async (_req, res) => {
     try {
@@ -35,6 +115,157 @@ export function adminRoute(prisma: PrismaClient) {
     } catch (error: any) {
       console.error('Error fetching institutions:', error);
       res.status(500).json({ error: 'Failed to fetch institutions' });
+    }
+  });
+
+  /**
+   * GET /api/admin/students/unlinked
+   * Shows student users that are not linked to an institution or student profile.
+   */
+  router.get('/students/unlinked', async (_req, res) => {
+    try {
+      const usersWithoutInstitution = await prisma.user.count({
+        where: {
+          role: 'student',
+          deletedAt: null,
+          institutionId: null,
+        },
+      });
+
+      const usersWithoutProfile = await prisma.user.count({
+        where: {
+          role: 'student',
+          deletedAt: null,
+          studentProfile: null,
+        },
+      });
+
+      const sample = await prisma.user.findMany({
+        where: {
+          role: 'student',
+          deletedAt: null,
+          OR: [{ institutionId: null }, { studentProfile: null }],
+        },
+        select: {
+          id: true,
+          email: true,
+          institutionId: true,
+          createdAt: true,
+          studentProfile: {
+            select: { id: true, institutionId: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
+
+      res.json({
+        success: true,
+        summary: {
+          usersWithoutInstitution,
+          usersWithoutProfile,
+          totalPotentiallyUnlinked: sample.length,
+        },
+        sample,
+      });
+    } catch (error: any) {
+      console.error('Error fetching unlinked students:', error);
+      res.status(500).json({ error: 'Failed to fetch unlinked students' });
+    }
+  });
+
+  /**
+   * POST /api/admin/students/unlinked/backfill
+   * Secure one-click backfill to link student users + profiles to Meru institution.
+   * Requires headers:
+   * - x-admin-email (if SUPER_ADMIN_EMAIL or ADMIN_REWARD_EMAIL is configured)
+   * - x-admin-password (SUPER_ADMIN_PASSWORD or ADMIN_REWARD_PASSWORD)
+   */
+  router.post('/students/unlinked/backfill', async (req, res) => {
+    try {
+      if (!isAuthorizedBackfillRequest(req)) {
+        return res.status(403).json({ error: 'Unauthorized' });
+      }
+
+      const result = await backfillStudentsToMeru();
+      return res.json({ success: true, result });
+    } catch (error: any) {
+      console.error('Error backfilling unlinked students:', error);
+      return res.status(500).json({ error: 'Failed to backfill unlinked students' });
+    }
+  });
+
+  /**
+   * POST /api/admin/credentials/:tokenId/backfill
+   * Manually backfill stored credential details for older records.
+   * Requires x-admin-password and optionally x-admin-email.
+   */
+  router.post('/credentials/:tokenId/backfill', async (req, res) => {
+    try {
+      if (!isAuthorizedBackfillRequest(req)) {
+        return res.status(403).json({ error: 'Unauthorized' });
+      }
+
+      const tokenId = BigInt(req.params.tokenId);
+      const {
+        studentName,
+        studentEmail,
+        institutionName,
+        degree,
+        program,
+        grade,
+        graduationYear,
+      } = req.body as {
+        studentName?: string;
+        studentEmail?: string;
+        institutionName?: string;
+        degree?: string;
+        program?: string;
+        grade?: string;
+        graduationYear?: number | string | null;
+      };
+
+      const credential = await prisma.credential.findUnique({
+        where: { tokenId },
+      });
+
+      if (!credential) {
+        return res.status(404).json({ error: 'Credential not found' });
+      }
+
+      const updated = await prisma.credential.update({
+        where: { tokenId },
+        data: {
+          studentName: studentName?.trim() || null,
+          studentEmail: studentEmail?.trim().toLowerCase() || null,
+          institutionName: institutionName?.trim() || null,
+          degree: degree?.trim() || null,
+          program: program?.trim() || null,
+          grade: grade?.trim() || null,
+          graduationYear:
+            graduationYear !== undefined && graduationYear !== null && String(graduationYear).trim() !== ''
+              ? Number(graduationYear)
+              : null,
+        },
+      });
+
+      return res.json({
+        success: true,
+        credential: {
+          id: updated.id,
+          tokenId: updated.tokenId.toString(),
+          studentName: updated.studentName,
+          studentEmail: updated.studentEmail,
+          institutionName: updated.institutionName,
+          degree: updated.degree,
+          program: updated.program,
+          grade: updated.grade,
+          graduationYear: updated.graduationYear,
+        },
+      });
+    } catch (error: any) {
+      console.error('Error backfilling credential details:', error);
+      return res.status(500).json({ error: 'Failed to backfill credential details' });
     }
   });
 

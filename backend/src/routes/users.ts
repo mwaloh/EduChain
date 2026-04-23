@@ -2,13 +2,63 @@ import express, { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { createUserWallet } from '../services/walletService';
 import crypto from 'crypto';
+import { ethers } from 'ethers';
+import { ensureCanonicalMeruInstitution } from '../utils/institutionDefaults';
 
 const router = express.Router();
 const prisma = new PrismaClient();
 const CREDENTIALS_PROVIDER = 'credentials';
-
 function hashPassword(password: string): string {
   return crypto.createHash('sha256').update(password).digest('hex');
+}
+
+async function getOrCreateDefaultStudentInstitution() {
+  return ensureCanonicalMeruInstitution(prisma);
+}
+
+async function ensureStudentProfileForUser(args: {
+  userId: string;
+  email: string;
+  walletAddress: string | null;
+  institutionId: string;
+}) {
+  const existingStudentProfile = await prisma.studentProfile.findFirst({
+    where: {
+      OR: [
+        { userId: args.userId },
+        { email: args.email },
+      ],
+    },
+    orderBy: [
+      { deletedAt: 'asc' },
+      { createdAt: 'desc' },
+    ],
+  });
+
+  if (existingStudentProfile) {
+    await prisma.studentProfile.update({
+      where: { id: existingStudentProfile.id },
+      data: {
+        userId: args.userId,
+        institutionId: args.institutionId,
+        walletAddress: args.walletAddress,
+        email: args.email,
+        status: 'active',
+        deletedAt: null,
+      },
+    });
+    return;
+  }
+
+  await prisma.studentProfile.create({
+    data: {
+      userId: args.userId,
+      institutionId: args.institutionId,
+      email: args.email,
+      walletAddress: args.walletAddress,
+      status: 'active',
+    },
+  });
 }
 
 /**
@@ -68,6 +118,8 @@ router.post('/google', async (req: Request, res: Response) => {
       },
     });
 
+    const defaultInstitution = await getOrCreateDefaultStudentInstitution();
+
     if (!user) {
       // Create new user with auto-generated wallet
       const wallet = createUserWallet(email);
@@ -80,6 +132,7 @@ router.post('/google', async (req: Request, res: Response) => {
           googleId,
           role: 'student',
           walletAddress: wallet.address,
+          institutionId: defaultInstitution.id,
         },
       });
       console.log(`[GOOGLE AUTH] New user created: ${email}`);
@@ -97,10 +150,18 @@ router.post('/google', async (req: Request, res: Response) => {
           googleId,
           name: name || user.name,
           image: image || user.image,
+          institutionId: user.institutionId || defaultInstitution.id,
         },
       });
       console.log(`[GOOGLE AUTH] User updated: ${email} (institutionId: ${user.institutionId || 'none'})`);
     }
+
+    await ensureStudentProfileForUser({
+      userId: user.id,
+      email: user.email,
+      walletAddress: user.walletAddress || null,
+      institutionId: user.institutionId || defaultInstitution.id,
+    });
 
     // Create or update account
     const existingAccount = await prisma.account.findFirst({
@@ -145,6 +206,7 @@ router.post('/google', async (req: Request, res: Response) => {
  *  - password: string
  *  - name?: string (required for signup)
  *  - role?: "student" | "employer" | "institution" (optional for signup)
+ *  - walletAddress?: string (required for signup)
  */
 router.post('/credentials-auth', async (req: Request, res: Response) => {
   try {
@@ -155,6 +217,7 @@ router.post('/credentials-auth', async (req: Request, res: Response) => {
       password,
       name,
       role,
+      walletAddress,
     } = req.body as {
       mode?: 'signup' | 'login';
       authMode?: 'signup' | 'login';
@@ -162,6 +225,7 @@ router.post('/credentials-auth', async (req: Request, res: Response) => {
       password?: string;
       name?: string;
       role?: 'student' | 'employer' | 'institution';
+      walletAddress?: string;
     };
 
     if (!email || !password) {
@@ -177,6 +241,12 @@ router.post('/credentials-auth', async (req: Request, res: Response) => {
       if (!name || !name.trim()) {
         return res.status(400).json({ error: 'Name is required for signup' });
       }
+      if (!walletAddress || !walletAddress.trim()) {
+        return res.status(400).json({ error: 'Wallet address is required for signup' });
+      }
+      if (!ethers.isAddress(walletAddress.trim())) {
+        return res.status(400).json({ error: 'Invalid wallet address' });
+      }
 
       const existingUser = await prisma.user.findFirst({
         where: { email: normalizedEmail, deletedAt: null },
@@ -186,7 +256,15 @@ router.post('/credentials-auth', async (req: Request, res: Response) => {
         return res.status(409).json({ error: 'User already exists' });
       }
 
-      const wallet = createUserWallet(normalizedEmail);
+      const normalizedWalletAddress = ethers.getAddress(walletAddress.trim()).toLowerCase();
+      const existingWalletUser = await prisma.user.findFirst({
+        where: { walletAddress: normalizedWalletAddress, deletedAt: null },
+      });
+
+      if (existingWalletUser) {
+        return res.status(409).json({ error: 'Wallet already linked to another user' });
+      }
+
       const resolvedRole =
         role === 'employer'
           ? 'employer'
@@ -194,14 +272,29 @@ router.post('/credentials-auth', async (req: Request, res: Response) => {
             ? 'institution_admin'
             : 'student';
 
+      const defaultInstitution =
+        resolvedRole === 'student'
+          ? await getOrCreateDefaultStudentInstitution()
+          : null;
+
       const user = await prisma.user.create({
         data: {
           email: normalizedEmail,
           name: name.trim(),
           role: resolvedRole,
-          walletAddress: wallet.address,
+          walletAddress: normalizedWalletAddress,
+          institutionId: resolvedRole === 'student' ? defaultInstitution?.id : null,
         },
       });
+
+      if (resolvedRole === 'student' && defaultInstitution) {
+        await ensureStudentProfileForUser({
+          userId: user.id,
+          email: user.email,
+          walletAddress: user.walletAddress || null,
+          institutionId: defaultInstitution.id,
+        });
+      }
 
       await prisma.account.create({
         data: {
@@ -255,6 +348,25 @@ router.post('/credentials-auth', async (req: Request, res: Response) => {
       });
     }
 
+    // Backfill student institution/profile for legacy self-registered student accounts.
+    if (user.role === 'student') {
+      const defaultInstitution = await getOrCreateDefaultStudentInstitution();
+
+      if (!user.institutionId) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { institutionId: defaultInstitution.id },
+        });
+      }
+
+      await ensureStudentProfileForUser({
+        userId: user.id,
+        email: user.email,
+        walletAddress: user.walletAddress || null,
+        institutionId: user.institutionId || defaultInstitution.id,
+      });
+    }
+
     return res.json({
       id: user.id,
       email: user.email,
@@ -281,10 +393,13 @@ router.post('/link-wallet', async (req: Request, res: Response) => {
     if (!userId || !walletAddress) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
+    if (!ethers.isAddress(walletAddress)) {
+      return res.status(400).json({ error: 'Invalid wallet address' });
+    }
 
     const user = await prisma.user.update({
       where: { id: userId },
-      data: { walletAddress },
+      data: { walletAddress: ethers.getAddress(walletAddress).toLowerCase() },
     });
 
     res.json({

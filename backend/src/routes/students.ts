@@ -5,6 +5,26 @@ import { generateWalletFromEmail, isValidWalletAddress } from '../services/walle
 export function studentsRoute(prisma: PrismaClient) {
   const router = Router();
 
+  async function resolveInstitutionContext(rawInstitutionId: string, adminEmail: string) {
+    if (rawInstitutionId) {
+      return rawInstitutionId;
+    }
+    if (!adminEmail) {
+      return '';
+    }
+
+    const admin = await prisma.institutionAdmin.findFirst({
+      where: {
+        email: adminEmail.toLowerCase(),
+        active: true,
+        deletedAt: null,
+      },
+      select: { institutionId: true },
+    });
+
+    return admin?.institutionId || '';
+  }
+
   /**
    * POST /api/students
    * Create a new student (Institution admin only)
@@ -14,7 +34,10 @@ export function studentsRoute(prisma: PrismaClient) {
     try {
       const { email, program, yearOfStudy, admissionNo, walletAddress } = req.body;
       const adminEmail = (req.headers['x-user-email'] as string) || '';
-      const institutionId = (req.headers['x-institution-id'] as string) || '';
+      const institutionId = await resolveInstitutionContext(
+        (req.headers['x-institution-id'] as string) || '',
+        adminEmail
+      );
 
       // Validate required fields
       if (!email || !institutionId) {
@@ -121,8 +144,11 @@ export function studentsRoute(prisma: PrismaClient) {
    */
   router.get('/', async (req: Request, res: Response) => {
     try {
-      const institutionId = (req.headers['x-institution-id'] as string) || '';
       const adminEmail = (req.headers['x-user-email'] as string) || '';
+      const institutionId = await resolveInstitutionContext(
+        (req.headers['x-institution-id'] as string) || '',
+        adminEmail
+      );
       const { status, search, page = '1', limit = '20' } = req.query;
 
       if (!institutionId) {
@@ -157,7 +183,12 @@ export function studentsRoute(prisma: PrismaClient) {
       }
 
       if (search) {
-        whereClause.OR = [{ email: { contains: search as string, mode: 'insensitive' } }, { admissionNo: { contains: search as string, mode: 'insensitive' } }];
+        // SQLite does not support Prisma's `mode: 'insensitive'` option here.
+        // Its default text matching is already case-insensitive for typical ASCII searches.
+        whereClause.OR = [
+          { email: { contains: search as string } },
+          { admissionNo: { contains: search as string } },
+        ];
       }
 
       // Get total count
@@ -194,8 +225,11 @@ export function studentsRoute(prisma: PrismaClient) {
   router.get('/:id', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const institutionId = (req.headers['x-institution-id'] as string) || '';
       const adminEmail = (req.headers['x-user-email'] as string) || '';
+      const institutionId = await resolveInstitutionContext(
+        (req.headers['x-institution-id'] as string) || '',
+        adminEmail
+      );
 
       if (!institutionId) {
         return res.status(400).json({ error: 'Institution ID required' });
@@ -246,8 +280,11 @@ export function studentsRoute(prisma: PrismaClient) {
   router.put('/:id', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const institutionId = (req.headers['x-institution-id'] as string) || '';
       const adminEmail = (req.headers['x-user-email'] as string) || '';
+      const institutionId = await resolveInstitutionContext(
+        (req.headers['x-institution-id'] as string) || '',
+        adminEmail
+      );
       const { program, yearOfStudy, admissionNo, status } = req.body;
 
       if (!institutionId) {
@@ -326,8 +363,11 @@ export function studentsRoute(prisma: PrismaClient) {
   router.delete('/:id', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const institutionId = (req.headers['x-institution-id'] as string) || '';
       const adminEmail = (req.headers['x-user-email'] as string) || '';
+      const institutionId = await resolveInstitutionContext(
+        (req.headers['x-institution-id'] as string) || '',
+        adminEmail
+      );
 
       if (!institutionId) {
         return res.status(400).json({ error: 'Institution ID required' });
@@ -388,8 +428,11 @@ export function studentsRoute(prisma: PrismaClient) {
    */
   router.get('/institution/stats', async (req: Request, res: Response) => {
     try {
-      const institutionId = (req.headers['x-institution-id'] as string) || '';
       const adminEmail = (req.headers['x-user-email'] as string) || '';
+      const institutionId = await resolveInstitutionContext(
+        (req.headers['x-institution-id'] as string) || '',
+        adminEmail
+      );
 
       if (!institutionId) {
         return res.status(400).json({ error: 'Institution ID required' });

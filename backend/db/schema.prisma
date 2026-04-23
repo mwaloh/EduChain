@@ -12,7 +12,7 @@ model User {
   id            String    @id @default(cuid())
   email         String    @unique
   googleId      String?   @unique
-  walletAddress String?   @unique // Blockchain address (optional, can be added later)
+  walletAddress String?   @unique // Required for credentials signup; validated with ethers.js
   name          String?
   emailVerified DateTime?
   image         String?
@@ -180,6 +180,13 @@ model Credential {
   tokenId       BigInt    @unique // NFT token ID
   studentAddress String   // Blockchain address
   studentHash   String    // SHA256 hash for privacy
+  studentName   String?
+  studentEmail  String?
+  institutionName String?
+  degree        String?
+  program       String?
+  grade         String?
+  graduationYear Int?
   ipfsCid       String
   institutionId String
   institution   Institution @relation(fields: [institutionId], references: [id])
