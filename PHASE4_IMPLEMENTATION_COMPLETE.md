@@ -612,7 +612,7 @@ Approval Flow:
 **For Employers:**
 - Registration: /employer-signup
 - Verification: /verify/{tokenId}
-- Support email: contact@educhain.com
+- Support email: wawerudickson21@gmail.com
 
 ---
 
