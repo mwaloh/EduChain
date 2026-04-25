@@ -629,11 +629,3 @@ fetch('https://api.staging.educhain.com/health')
 
 ---
 
-## Next Steps
-
-1. Run through all test scenarios on staging
-2. Performance testing with load balancer
-3. Security audit (OWASP top 10)
-4. User acceptance testing with institution partners
-5. Production deployment
-
