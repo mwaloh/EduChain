@@ -107,5 +107,3 @@ For production, update these environment variables:
 - ✅ User data is encrypted in JWT tokens
 - ✅ Backend validates all user creation/update requests
 - ✅ CORS protection via NextAuth configuration
-
-Your Google OAuth is ready to go! Just add your credentials and test it out.
