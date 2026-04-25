@@ -391,6 +391,3 @@ Important Prisma models in `backend/db/schema.prisma` include:
 - `INTEGRATION_GUIDE.md`
 - `TOKEN_REWARDS_DOCUMENTATION.md`
 
-## Contact
-
-This repository appears to be a final year project. Update this section with the preferred maintainer, supervisor, or team contact before final submission or handoff.
